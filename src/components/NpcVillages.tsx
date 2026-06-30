@@ -13,13 +13,13 @@ const TERRITORY_TINT = '#9fb0c8' // cool tint, distinct from the player's warm b
 const OWNED_TINT = '#e6cf94' // warm gold tint for villages that have joined you
 
 // one ambling NPC inhabitant; mirrors its live sim position onto the mesh
-function NpcVillagerMesh({ villageId, index }: { villageId: number; index: number }) {
+function NpcVillagerMesh({ villageId, vid }: { villageId: number; vid: number }) {
   const root = useRef<Group>(null)
   const last = useRef({ x: 0, z: 0 })
   useFrame((state) => {
     const village = useGame.getState().npcVillages.find((v) => v.id === villageId)
-    const nv = village?.villagers[index]
-    if (!nv || !root.current) return
+    const nv = village?.villagers.find((x) => x.id === vid)
+    if (!village || !nv || !root.current) return
     const t = state.clock.elapsedTime
     const moved = Math.hypot(nv.pos.x - last.current.x, nv.pos.z - last.current.z) > 0.003
     last.current.x = nv.pos.x
@@ -89,6 +89,7 @@ function NpcVillageView({ village, selected }: { village: NpcVillage; selected: 
   const onOut = () => (document.body.style.cursor = 'auto')
   const tier = TOWN_TIERS[village.tierIndex]
   const owned = village.owner === 'player'
+  const won = useGame((s) => s.endgame?.won ?? false)
 
   return (
     <group position={[village.center.x, 0, village.center.z]}>
@@ -114,16 +115,18 @@ function NpcVillageView({ village, selected }: { village: NpcVillage; selected: 
         </group>
       ))}
 
-      {village.villagers.map((_, i) => (
-        <NpcVillagerMesh key={i} villageId={village.id} index={i} />
+      {village.villagers.map((nv) => (
+        <NpcVillagerMesh key={nv.id} villageId={village.id} vid={nv.id} />
       ))}
 
-      <Html position={[0, 4.4, 0]} center occlude={false} style={{ pointerEvents: 'none' }}>
-        <div className="npc-label">
-          {village.name}
-          <span>{tier.era}</span>
-        </div>
-      </Html>
+      {!won && (
+        <Html position={[0, 4.4, 0]} center occlude={false} style={{ pointerEvents: 'none' }}>
+          <div className={`npc-label ${owned ? 'owned' : 'neutral'}`}>
+            {owned ? `⚜ ${village.name}` : village.name}
+            <span>{owned ? 'your settlement' : `${tier.era} · neutral`}</span>
+          </div>
+        </Html>
+      )}
     </group>
   )
 }

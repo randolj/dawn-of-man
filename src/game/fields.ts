@@ -1,4 +1,5 @@
 import type { ResourceField } from './types'
+import { VILLAGE_SITES } from './npc'
 
 // Natural resource areas you build production on: forests (wood) and berry
 // fields (food). Generated once from a fixed seed so they're stable, and we
@@ -68,6 +69,42 @@ function build(): FieldData[] {
     const field: ResourceField = { id: id++, type: s.type, pos: { x, z }, radius: s.radius }
     const count = s.type === 'forest' ? 15 : s.type === 'berryfield' ? 12 : 7
     data.push({ field, clumps: scatter(r, x, z, s.radius, count) })
+  }
+
+  // Each settled village has a forest and a berry patch just outside its core,
+  // so a captured village can be developed into a self-sufficient forward base
+  // (and the greenery doubles as a faint "something's out here" hint through the fog).
+  const around: { type: ResourceField['type']; off: number; ang: number; radius: number }[] = [
+    { type: 'forest', off: 8, ang: 0.6, radius: 3.2 },
+    { type: 'berryfield', off: 8, ang: 3.4, radius: 2.6 },
+  ]
+  for (const site of VILLAGE_SITES) {
+    for (const a of around) {
+      const x = site.x + Math.cos(a.ang) * a.off
+      const z = site.z + Math.sin(a.ang) * a.off
+      const field: ResourceField = { id: id++, type: a.type, pos: { x, z }, radius: a.radius }
+      const count = a.type === 'forest' ? 15 : 12
+      data.push({ field, clumps: scatter(r, x, z, a.radius, count) })
+    }
+  }
+
+  // Orichalcum — the better metal — lies only in far, contested ground.
+  // (1) a deposit inside the larger (tier 2+) village's territory, reached by
+  //     TAKING that village (conquer / convert), then mining it.
+  const orichSite = VILLAGE_SITES.find((v) => v.tier >= 2)
+  if (orichSite) {
+    const ox = orichSite.x + Math.cos(5.0) * 11
+    const oz = orichSite.z + Math.sin(5.0) * 11
+    const field: ResourceField = { id: id++, type: 'orichalcumdeposit', pos: { x: ox, z: oz }, radius: 2.7 }
+    data.push({ field, clumps: scatter(r, ox, oz, 2.7, 7) })
+  }
+  // (2) a deposit out in empty, unclaimed wilderness — far from any village, so
+  //     the only way to reach it is to FOUND a new settlement beside it.
+  {
+    const fx = Math.cos(4.0) * 72
+    const fz = Math.sin(4.0) * 72
+    const field: ResourceField = { id: id++, type: 'orichalcumdeposit', pos: { x: fx, z: fz }, radius: 2.8 }
+    data.push({ field, clumps: scatter(r, fx, fz, 2.8, 8) })
   }
   return data
 }

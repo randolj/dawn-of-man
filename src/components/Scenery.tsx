@@ -1,4 +1,5 @@
 import { SCENERY } from '../game/scenery'
+import { useGame } from '../game/store'
 
 // decorative meshes must never intercept pointer events (so ground clicks,
 // pickups and ghosts keep working); this raycast fn reports no hits.
@@ -51,14 +52,17 @@ function TreeMesh({ t }: { t: (typeof SCENERY.trees)[number] }) {
 }
 
 export function Scenery() {
+  const choppedTrees = useGame((s) => s.choppedTrees)
+  const chopped = new Set(choppedTrees)
   return (
     <group>
       {SCENERY.mountains.map((m, i) => (
         <MountainMesh key={`m${i}`} m={m} />
       ))}
-      {SCENERY.trees.map((t, i) => (
-        <TreeMesh key={`t${i}`} t={t} />
-      ))}
+      {SCENERY.trees.map((t, i) =>
+        // a scenery tree the survivor chopped down is gone from the world
+        chopped.has(`s${i}`) ? null : <TreeMesh key={`t${i}`} t={t} />,
+      )}
       {SCENERY.rocks.map((r, i) => (
         <mesh
           key={`r${i}`}

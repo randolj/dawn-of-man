@@ -1,4 +1,5 @@
 import { FIELDS, FIELD_CLUMPS, type Clump } from '../game/fields'
+import { useGame } from '../game/store'
 import type { ResourceField } from '../game/types'
 
 const noHit = () => null
@@ -96,9 +97,10 @@ const TINTS: Record<ResourceField['type'], string> = {
   berryfield: '#7d8a4a',
   rock: '#8a8278',
   mithrildeposit: '#6f8a8f',
+  orichalcumdeposit: '#8c7c46',
 }
 
-function Field({ field }: { field: ResourceField }) {
+function Field({ field, chopped }: { field: ResourceField; chopped: Set<string> }) {
   const clumps = FIELD_CLUMPS[field.id] ?? []
   return (
     <group>
@@ -109,11 +111,14 @@ function Field({ field }: { field: ResourceField }) {
       </mesh>
       {clumps.map((c, i) =>
         field.type === 'forest' ? (
-          <PineClump key={i} c={c} />
+          // a tree the survivor has chopped down is gone from the world
+          chopped.has(`${field.id}:${i}`) ? null : <PineClump key={i} c={c} />
         ) : field.type === 'berryfield' ? (
           <BushClump key={i} c={c} />
         ) : field.type === 'mithrildeposit' ? (
           <OreClump key={i} c={c} ore="#9fd4de" />
+        ) : field.type === 'orichalcumdeposit' ? (
+          <OreClump key={i} c={c} ore="#f0c34a" />
         ) : (
           <RockClump key={i} c={c} />
         ),
@@ -123,10 +128,12 @@ function Field({ field }: { field: ResourceField }) {
 }
 
 export function Fields() {
+  const choppedTrees = useGame((s) => s.choppedTrees)
+  const chopped = new Set(choppedTrees)
   return (
     <group>
       {FIELDS.map((f) => (
-        <Field key={f.id} field={f} />
+        <Field key={f.id} field={f} chopped={chopped} />
       ))}
     </group>
   )

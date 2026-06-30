@@ -12,12 +12,19 @@ export function HoverTooltip() {
   // resource deposits read as plain scenery until their resource is unlocked
   if (field.type === 'rock' && !stoneUnlocked(tierIndex)) return null
   if (field.type === 'mithrildeposit' && !resourceUnlocked('mithril', tierIndex)) return null
+  if (field.type === 'orichalcumdeposit' && !resourceUnlocked('orichalcum', tierIndex)) return null
 
   const meta = {
     forest: { def: PRODUCTION.lumberyard, icon: '🌲', title: 'Forest', res: 'wood' },
     berryfield: { def: PRODUCTION.forager, icon: '🫐', title: 'Berry field', res: 'food' },
     rock: { def: PRODUCTION.quarry, icon: '⛰️', title: 'Rock outcrop', res: 'stone' },
     mithrildeposit: { def: PRODUCTION.mine, icon: '💎', title: 'Mithril deposit', res: 'mithril' },
+    orichalcumdeposit: {
+      def: PRODUCTION.orichalcummine,
+      icon: '🟡',
+      title: 'Orichalcum deposit',
+      res: 'orichalcum',
+    },
   }[field.type]
   const { def, icon, title, res } = meta
   const buildName = def.levels[0].name

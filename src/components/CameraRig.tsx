@@ -41,6 +41,8 @@ export function CameraRig() {
   const fwd = useRef(new Vector3())
   const right = useRef(new Vector3())
   const move = useRef(new Vector3())
+  const focusVec = useRef(new Vector3())
+  const offsetVec = useRef(new Vector3())
 
   useFrame((_, dt) => {
     if (!controls || heldId !== null) return // don't pan while carrying a villager
@@ -51,6 +53,23 @@ export function CameraRig() {
     if (k.has('s') || k.has('arrowdown')) z -= 1
     if (k.has('a') || k.has('arrowleft')) x -= 1
     if (k.has('d') || k.has('arrowright')) x += 1
+
+    // smoothly fly to a focused settlement (the switcher); any manual key cancels it
+    const focus = useGame.getState().cameraFocus
+    if (focus) {
+      if (x !== 0 || z !== 0) {
+        useGame.getState().focusCamera(null)
+      } else {
+        const target = focusVec.current.set(focus.x, controls.target.y, focus.z)
+        const offset = offsetVec.current.copy(camera.position).sub(controls.target) // keep zoom/angle
+        controls.target.lerp(target, Math.min(1, dt * 5))
+        camera.position.copy(controls.target).add(offset)
+        controls.update()
+        if (controls.target.distanceTo(target) < 0.4) useGame.getState().focusCamera(null)
+        return
+      }
+    }
+
     if (x === 0 && z === 0) return
 
     // camera-relative directions flattened onto the ground plane

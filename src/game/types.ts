@@ -1,4 +1,11 @@
-export type ResourceType = 'wood' | 'food' | 'stone' | 'mithril' | 'weapons'
+export type ResourceType =
+  | 'wood'
+  | 'food'
+  | 'stone'
+  | 'mithril'
+  | 'orichalcum'
+  | 'starmetal'
+  | 'weapons'
 
 /** a full stockpile — every resource has a value */
 export type Resources = Record<ResourceType, number>
@@ -22,6 +29,8 @@ export type VillagerState =
   | 'marching' // a soldier in a war party heading to attack a village
   | 'fighting' // a soldier locked in melee at a village
   | 'converting' // a missionary at a village, winning it over
+  | 'defending' // rallied to repel a raid on one of your settlements
+  | 'settling' // a settler marching out to found a new settlement
   | 'held' // picked up by the god's hand; position driven by the cursor
 
 export interface Villager {
@@ -51,6 +60,8 @@ export interface Villager {
   huntAnimalId: number | null
   /** the NPC village a soldier is marching on / a missionary is converting, or null */
   targetVillageId: number | null
+  /** where a defender rallies to repel a raid (the clash point), or null */
+  defendTarget: Vec2 | null
   /** purely cosmetic phase offset so villagers don't bob in sync */
   bob: number
 }
@@ -70,11 +81,13 @@ export interface Animal {
   /** false once hunted; counts down `respawnTimer` then returns elsewhere */
   alive: boolean
   respawnTimer: number
+  /** left-click hits taken from the first-person survivor (felled at DEER_HP) */
+  hits: number
   bob: number
 }
 
 // ---- natural resource areas -------------------------------------------------
-export type FieldType = 'forest' | 'berryfield' | 'rock' | 'mithrildeposit'
+export type FieldType = 'forest' | 'berryfield' | 'rock' | 'mithrildeposit' | 'orichalcumdeposit'
 
 export interface ResourceField {
   id: number
@@ -93,8 +106,11 @@ export type BuildMode =
   | 'quarry'
   | 'hunter'
   | 'mine'
+  | 'orichalcummine'
   | 'smithy'
   | 'scout'
+  | 'settle'
+  | 'erasePath'
 
 export type BuildingKind =
   | 'house'
@@ -103,10 +119,20 @@ export type BuildingKind =
   | 'quarry'
   | 'hunter'
   | 'mine'
+  | 'orichalcummine'
   | 'smithy'
+  | 'starforge'
 
 /** the production-building kinds (everything but residences) */
-export type ProductionKind = 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'smithy'
+export type ProductionKind =
+  | 'lumberyard'
+  | 'forager'
+  | 'quarry'
+  | 'hunter'
+  | 'mine'
+  | 'orichalcummine'
+  | 'smithy'
+  | 'starforge'
 
 /** which dwelling model a residence shows, by era */
 export type ResidenceModelKind = 'leanto' | 'tent' | 'hut' | 'house' | 'cottage'
@@ -203,13 +229,17 @@ export interface TownTier {
 }
 
 // ---- NPC villages (neutral settlements out in the world) --------------------
-/** a lightweight wandering inhabitant of an NPC village (idle life only) */
+/** a lightweight wandering inhabitant of an NPC village (idle life + raiding) */
 export interface NpcVillager {
+  /** stable identity (render key + raid casualty tracking) */
+  id: number
   pos: Vec2
   heading: number
   wanderTarget: Vec2 | null
   /** idle pause timer between ambles */
   restTimer: number
+  /** a raid march target (clash point, then home), or null while at home */
+  target: Vec2 | null
   /** cosmetic bob phase */
   bob: number
 }
@@ -223,6 +253,29 @@ export interface Battle {
   win: boolean
   /** soldiers fated to fall, each at a staggered moment during the fight */
   doomed: { id: number; at: number; dead: boolean }[]
+}
+
+/** an incoming attack from a neutral village on one of YOUR settlements */
+export interface Raid {
+  /** the attacking (neutral) village */
+  fromVillageId: number
+  /** centre of the settlement being defended */
+  target: Vec2
+  /** owned-village id under attack, or null when it's your capital */
+  targetVillageId: number | null
+  /** where the two sides meet — just outside the settlement, on the raiders' side */
+  clash: Vec2
+  phase: 'march' | 'fight'
+  /** counts up once the melee begins */
+  timer: number
+  /** decided when the melee starts: do your defenders hold? */
+  defenderWins: boolean
+  /** NpcVillager ids marching in this raid */
+  raiderIds: number[]
+  /** raiders fated to fall, staggered through the fight */
+  doomedRaiders: { id: number; at: number; dead: boolean }[]
+  /** your defenders (player villager ids) fated to fall, staggered */
+  doomedDefenders: { id: number; at: number; dead: boolean }[]
 }
 
 /** a neutral AI settlement: idles and slowly accrues its own resources */
@@ -248,9 +301,35 @@ export interface NpcVillage {
   villagers: NpcVillager[]
 }
 
+/** active when your capital has fallen: you control the lone survivor in first
+ * person and must gather enough wood + food to found a new city */
+export interface Refounding {
+  woodGoal: number
+  foodGoal: number
+  /** the one villager you control (camera follows them) */
+  survivorId: number
+}
+
+/** the endgame arc, kicked off when a meteor falls in the Medieval era */
+export interface Endgame {
+  /** where the meteor crashed (far from every settlement) */
+  meteorPos: Vec2
+  /** a scout has reached it */
+  found: boolean
+  /** the meteor has been opened (the Starforge is active) */
+  open: boolean
+  /** the chosen endgame path, set once starmetal is maxed */
+  specialty: 'magic' | 'tech' | null
+  /** the portal (magic) / starship (tech) has been built */
+  built: boolean
+  /** the people have passed through / launched — victory */
+  won: boolean
+}
+
 /** what the player currently has selected for the management panel */
 export type Selection =
   | { kind: 'building'; id: number }
   | { kind: 'townhall' }
   | { kind: 'npc'; id: number }
+  | { kind: 'meteor' }
   | null

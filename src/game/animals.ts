@@ -43,6 +43,7 @@ export function makeAnimals(): Animal[] {
         restTimer: r() * 3,
         alive: true,
         respawnTimer: 0,
+        hits: 0,
         bob: r() * 6,
       })
     }

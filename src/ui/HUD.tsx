@@ -8,18 +8,27 @@ const LABELS: Record<ResourceType, string> = {
   food: 'Food',
   stone: 'Stone',
   mithril: 'Mithril',
+  orichalcum: 'Orichalcum',
+  starmetal: 'Starmetal',
   weapons: 'Weapons',
 }
 
 export function HUD() {
   const resources = useGame((s) => s.resources)
   const pop = useGame((s) => s.villagers.length)
-  const buildings = useGame((s) => s.buildings)
   const tierIndex = useGame((s) => s.tierIndex)
+  const buildings = useGame((s) => s.buildings)
+  const npcVillages = useGame((s) => s.npcVillages)
+  const forgeOpen = useGame((s) => s.endgame?.open ?? false)
   const tier = TOWN_TIERS[tierIndex]
-  const popCap = tier.popCap + residencePop(buildings)
+  // total housing = capital tier + your homes + EVERY owned village's tier housing
+  const popCap =
+    tier.popCap +
+    residencePop(buildings) +
+    npcVillages.reduce((sum, v) => sum + (v.owner === 'player' ? TOWN_TIERS[v.tierIndex].popCap : 0), 0)
   const cap = tier.storageCap
-  const shown = RESOURCE_TYPES.filter((t) => resourceUnlocked(t, tierIndex))
+  // starmetal is hidden until the Starforge cracks open; then it joins the bar
+  const shown = RESOURCE_TYPES.filter((t) => (t === 'starmetal' ? forgeOpen : resourceUnlocked(t, tierIndex)))
 
   return (
     <>

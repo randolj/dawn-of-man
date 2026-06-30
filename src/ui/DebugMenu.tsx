@@ -18,6 +18,7 @@ const CODE = [
 
 export function DebugMenu() {
   const [open, setOpen] = useState(false)
+  const raidsEnabled = useGame((s) => s.raidsEnabled)
 
   useEffect(() => {
     let buf: string[] = []
@@ -59,6 +60,21 @@ export function DebugMenu() {
       <div className="debug-actions">
         <button className="btn debug-btn" onClick={() => useGame.getState().debugDiscoverAll()}>
           Reveal all villages
+        </button>
+        <button className="btn debug-btn" onClick={() => useGame.getState().toggleRaids()}>
+          Random raids: {raidsEnabled ? 'ON' : 'OFF'}
+        </button>
+        <button className="btn debug-btn" onClick={() => useGame.getState().destroyCapital()}>
+          Destroy capital (play survival)
+        </button>
+        <button className="btn debug-btn" onClick={() => useGame.getState().debugRefound()}>
+          Auto-test refound cycle
+        </button>
+        <button className="btn debug-btn" onClick={() => useGame.getState().debugEndgame()}>
+          Endgame: meteor found + maxed
+        </button>
+        <button className="btn debug-btn" onClick={() => useGame.getState().debugStarforgeFull()}>
+          Endgame: Starforge full
         </button>
         <button className="btn debug-btn" onClick={() => useGame.getState().saveGame()}>
           Save now

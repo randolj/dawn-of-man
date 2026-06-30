@@ -10,7 +10,11 @@ export function GameLoop() {
   const tick = useGame((s) => s.tick)
   useFrame((_, delta) => {
     // clamp delta so a tabbed-out pause doesn't teleport everyone
-    tick(Math.min(delta, 0.05))
+    const dt = Math.min(delta, 0.05)
+    // fast-forward by substepping whole ticks (keeps movement/routing stable
+    // vs. one giant dt) — speed is read live so changes take effect instantly
+    const speed = useGame.getState().gameSpeed
+    for (let i = 0; i < speed; i++) tick(dt)
   })
   return null
 }

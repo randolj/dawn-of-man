@@ -457,11 +457,12 @@ export function ProductionModel({
   level,
   material,
 }: {
-  kind: 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'smithy'
+  kind: 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'orichalcummine' | 'smithy' | 'starforge'
   level: number
   material?: Material
 }) {
-  if (kind === 'mine') return <MineModel level={level} material={material} />
+  // the orichalcum mine reuses the mine model — the golden ore it sits on sets it apart
+  if (kind === 'mine' || kind === 'orichalcummine') return <MineModel level={level} material={material} />
   const list =
     kind === 'lumberyard'
       ? LUMBER

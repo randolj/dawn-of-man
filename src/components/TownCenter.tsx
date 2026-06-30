@@ -1,7 +1,8 @@
 import { useRef } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { Html } from '@react-three/drei'
 import type { PointLight } from 'three'
-import { useGame } from '../game/store'
+import { TOWN_CENTER, useGame } from '../game/store'
 import { TOWN_TIERS } from '../game/config'
 import { UpgradeBeacon } from './Residence'
 
@@ -9,6 +10,8 @@ export function TownCenter() {
   const tierIndex = useGame((s) => s.tierIndex)
   const resources = useGame((s) => s.resources)
   const selection = useGame((s) => s.selection)
+  const refounding = useGame((s) => s.refounding)
+  const won = useGame((s) => s.endgame?.won ?? false)
   const tier = TOWN_TIERS[tierIndex]
   const fireLight = useRef<PointLight>(null)
   const flame = useRef<THREE_Group>(null)
@@ -43,8 +46,16 @@ export function TownCenter() {
   }
   const onOut = () => (document.body.style.cursor = 'auto')
 
+  // a destroyed capital shows nothing — not even a campfire — until it's refounded
+  if (refounding) return null
+
   return (
-    <group onClick={onClick} onPointerOver={onOver} onPointerOut={onOut}>
+    <group
+      position={[TOWN_CENTER.x, 0, TOWN_CENTER.z]}
+      onClick={onClick}
+      onPointerOver={onOver}
+      onPointerOut={onOut}
+    >
       {selected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
           <ringGeometry args={[2.0, 2.3, 36]} />
@@ -52,6 +63,19 @@ export function TownCenter() {
         </mesh>
       )}
       {canUpgrade && <UpgradeBeacon y={beaconY} />}
+      {!won && (
+        <Html
+          position={[0, Math.max(4.2, tier.height + 2.8), 0]}
+          center
+          occlude={false}
+          style={{ pointerEvents: 'none' }}
+        >
+          <div className="npc-label owned capital">
+            ⚜ Capital
+            <span>{tier.era}</span>
+          </div>
+        </Html>
+      )}
       {tierIndex === 0 ? (
         // ---- Campfire ----
         <group>

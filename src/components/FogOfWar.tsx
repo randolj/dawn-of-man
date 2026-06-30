@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { CanvasTexture } from 'three'
-import { useGame } from '../game/store'
+import { TOWN_CENTER, useGame } from '../game/store'
 import { WORLD_RADIUS } from '../game/scenery'
 import { REVEAL_RADIUS, TOWN_TIERS, VILLAGE_REVEAL_RADIUS } from '../game/config'
 
@@ -17,8 +17,11 @@ const HOME_MARGIN = 12 // reveal a little beyond your borders so home never fogs
 const noHit = () => null
 
 export function FogOfWar() {
+  // first person reveals the whole map — no darkened areas while refounding
+  const refounding = useGame((s) => s.refounding)
   const drawn = useRef(0) // how many explored breadcrumbs we've painted
   const drawnTier = useRef(-1)
+  const drawnHome = useRef({ x: NaN, z: NaN }) // capital spot last revealed (moves on refound)
   const revealedVillages = useRef<Set<number>>(new Set()) // discovered villages already cleared
 
   const { ctx, texture } = useMemo(() => {
@@ -60,14 +63,20 @@ export function FogOfWar() {
       ctx.fillRect(0, 0, TEX, TEX)
       drawn.current = 0
       drawnTier.current = -1
+      drawnHome.current = { x: NaN, z: NaN }
       revealedVillages.current.clear()
       dirty = true
     }
 
-    // your claimed land is always explored (and grows with the town tier)
-    if (g.tierIndex !== drawnTier.current) {
-      reveal(0, 0, TOWN_TIERS[g.tierIndex].territoryRadius + HOME_MARGIN)
+    // your claimed land is always explored (grows with the tier; moves if refounded)
+    if (
+      g.tierIndex !== drawnTier.current ||
+      TOWN_CENTER.x !== drawnHome.current.x ||
+      TOWN_CENTER.z !== drawnHome.current.z
+    ) {
+      reveal(TOWN_CENTER.x, TOWN_CENTER.z, TOWN_TIERS[g.tierIndex].territoryRadius + HOME_MARGIN)
       drawnTier.current = g.tierIndex
+      drawnHome.current = { x: TOWN_CENTER.x, z: TOWN_CENTER.z }
       dirty = true
     }
 
@@ -96,6 +105,8 @@ export function FogOfWar() {
 
     if (dirty) texture.needsUpdate = true
   })
+
+  if (refounding) return null // whole map visible in first person
 
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.09, 0]} raycast={noHit}>

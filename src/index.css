@@ -7,7 +7,10 @@
   --food: #7bc96f;
   --stone: #aab2bb;
   --mithril: #bfe3ec;
+  --orichalcum: #e8b13c;
+  --starmetal: #c4b6ff;
   --weapons: #d05a4a;
+  --owned: #e0b84a;
   --accent: #ffb454;
   font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
 }
@@ -126,6 +129,39 @@ canvas {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   margin-top: 2px;
+}
+
+/* Fast-forward control, tucked under the era badge */
+.speed-control {
+  position: absolute;
+  top: 82px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+}
+
+.speed-btn {
+  border: none;
+  background: transparent;
+  color: var(--ui-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.speed-btn:hover {
+  color: var(--ui-text);
+}
+
+.speed-btn.active {
+  background: var(--accent);
+  color: #1a1206;
 }
 
 /* Bottom action panel */
@@ -290,6 +326,7 @@ canvas {
 .bp-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .bp-influence {
@@ -318,6 +355,122 @@ canvas {
 .bp-btn {
   flex: 1;
   min-width: 0;
+}
+
+/* Last-survivor refounding overlay (bottom-centre) */
+.survival {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  width: min(440px, 92vw);
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(28, 18, 16, 0.82);
+  border: 1px solid rgba(224, 101, 90, 0.5);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  color: #f4ece6;
+  text-align: center;
+  pointer-events: auto;
+  backdrop-filter: blur(6px);
+}
+
+.survival-banner {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  color: #ff9b8a;
+}
+
+.survival-sub {
+  font-size: 12px;
+  color: var(--ui-muted);
+  margin: 4px 0 12px;
+}
+
+.survival-goals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.survival-goal-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.survival-goal-done {
+  color: var(--food);
+}
+
+.survival-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.survival-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c9863f, #e9b56a);
+  transition: width 0.18s linear;
+}
+
+.survival-bar-fill.done {
+  background: linear-gradient(90deg, #5f9e4f, #8fd07a);
+}
+
+.survival-found {
+  width: 100%;
+  font-weight: 800;
+  background: rgba(214, 76, 64, 0.5);
+  border-color: #e0655a;
+}
+
+.survival-found:disabled {
+  opacity: 0.5;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.survival-hint {
+  font-size: 11px;
+  color: var(--ui-muted);
+  margin-top: 10px;
+}
+
+/* aiming reticle, centre screen, in first person */
+.survival-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+/* Demolish — sits on its own row, tinted as a destructive action */
+.bp-demolish {
+  flex-basis: 100%;
+  background: rgba(180, 70, 60, 0.16);
+  border-color: rgba(210, 90, 74, 0.5);
+}
+
+.bp-demolish:hover {
+  background: rgba(180, 70, 60, 0.28);
+}
+
+.bp-demolish.armed {
+  background: rgba(214, 76, 64, 0.42);
+  border-color: #e0655a;
 }
 
 .bp-cost {
@@ -441,6 +594,82 @@ canvas {
 .tool.nudge {
   border-color: var(--accent);
   animation: toolPulse 1.6s ease-in-out infinite;
+}
+
+.tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tool:disabled:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* collapsible group header (Resources) */
+.build-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ui-text);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.build-group-head:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.build-group-head.open {
+  background: rgba(255, 180, 84, 0.16);
+  border-color: var(--accent);
+}
+
+.build-group-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.build-group-head .chev {
+  color: var(--ui-muted);
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+
+.build-group-head.open .chev {
+  transform: rotate(90deg); /* points down into the flyout when open */
+  color: var(--accent);
+}
+
+/* Resources flyout — opens to the right of the bar and downward */
+.build-group-wrap {
+  position: relative;
+}
+
+.build-flyout {
+  position: absolute;
+  /* clears the bar's right padding (12px) + a gap, so it sits beside the bar */
+  left: calc(100% + 22px);
+  top: 0;
+  width: 178px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  max-height: 78vh;
+  overflow-y: auto;
+  z-index: 6;
+}
+
+.build-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.09);
+  margin: 1px 2px;
 }
 
 /* Objectives panel (top-right) */
@@ -710,6 +939,82 @@ canvas {
   color: #e2b3ab;
 }
 
+/* yours = warm gold; neutral keeps the reddish accent */
+.npc-label.owned {
+  color: #ffe8b0;
+}
+.npc-label.owned span {
+  color: var(--owned);
+}
+.npc-label.neutral span {
+  color: #e2a39a;
+}
+
+/* settlement switcher (top-right) */
+.settlements {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.settlements-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ui-muted);
+  margin-bottom: 2px;
+}
+
+.settle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ui-text);
+  font: inherit;
+}
+
+.settle-row:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.settle-row.active {
+  border-color: var(--owned);
+  background: rgba(224, 184, 74, 0.16);
+}
+
+.settle-dot {
+  color: var(--owned);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.settle-name {
+  display: flex;
+  flex-direction: column;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.15;
+}
+
+.settle-name span {
+  font-weight: 600;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ui-muted);
+}
+
 /* hidden debug menu (Konami code) */
 .debug-menu {
   position: fixed;
@@ -766,4 +1071,250 @@ canvas {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ui-muted);
+}
+
+/* ---- fallen-star endgame ---- */
+.endgame-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  transform: translateX(-50%);
+  width: 380px;
+  padding: 16px 18px 18px;
+  text-align: center;
+  border-color: rgba(196, 182, 255, 0.4);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.45),
+    0 0 24px rgba(150, 110, 255, 0.25);
+  animation: eg-rise 0.5s ease;
+}
+
+@keyframes eg-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.eg-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--ui-muted);
+  padding: 2px 4px;
+}
+
+.eg-close:hover {
+  color: var(--ui-text);
+}
+
+.eg-kicker {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--starmetal);
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.eg-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  margin-bottom: 6px;
+  background: linear-gradient(120deg, #fff, var(--starmetal));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.eg-body {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ui-muted);
+  margin: 0 0 12px;
+}
+
+.eg-reqs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.eg-req {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ui-muted);
+}
+
+.eg-req.done {
+  color: var(--food);
+  background: rgba(123, 201, 111, 0.12);
+}
+
+.eg-check {
+  font-size: 14px;
+  width: 16px;
+}
+
+.eg-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.eg-meter {
+  position: relative;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.eg-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, #6b4bff, var(--starmetal));
+  transition: width 0.3s ease;
+}
+
+.eg-meter-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.eg-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.eg-btn {
+  justify-content: center;
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.eg-go {
+  width: 100%;
+  background: linear-gradient(120deg, #7d4bff, #b78bff);
+  border-color: rgba(196, 182, 255, 0.5);
+}
+
+.eg-staff {
+  width: 100%;
+  margin-bottom: 12px;
+  background: linear-gradient(120deg, #c2541b, #ff9a3c);
+  border-color: rgba(255, 154, 60, 0.5);
+}
+
+.eg-magic {
+  background: linear-gradient(120deg, #6b3bff, #b08bff);
+  border-color: rgba(176, 139, 255, 0.5);
+}
+
+.eg-tech {
+  background: linear-gradient(120deg, #2b8fb8, #7adcff);
+  border-color: rgba(122, 220, 255, 0.5);
+}
+
+.eg-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--ui-muted);
+  opacity: 0.85;
+}
+
+/* ---- victory screen ---- */
+.victory-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 40%, rgba(40, 22, 70, 0.7), rgba(6, 5, 14, 0.92));
+  backdrop-filter: blur(6px);
+  z-index: 50;
+  animation: eg-fade 1.2s ease;
+}
+
+@keyframes eg-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.victory-card {
+  max-width: 540px;
+  padding: 8px 28px;
+  text-align: center;
+}
+
+.victory-kicker {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--starmetal);
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.victory-title {
+  font-size: 46px;
+  line-height: 1.05;
+  margin: 0 0 18px;
+  font-weight: 900;
+  background: linear-gradient(120deg, #fff, var(--starmetal) 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.victory-body {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ui-text);
+  margin: 0 0 14px;
+}
+
+.victory-sub {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ui-muted);
+  margin: 0 0 26px;
+}
+
+.victory-btn {
+  display: inline-flex;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 12px 28px;
+  background: linear-gradient(120deg, #7d4bff, #b78bff);
+  border-color: rgba(196, 182, 255, 0.5);
 }

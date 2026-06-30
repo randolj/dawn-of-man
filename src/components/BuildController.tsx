@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { MeshStandardMaterial, type Group, type Mesh } from 'three'
-import { snapPathPoint, useGame } from '../game/store'
-import { PRODUCTION, RESIDENCE_ERAS, RESIDENCE_HALF, PATH_WIDTH } from '../game/config'
+import { MeshBasicMaterial, MeshStandardMaterial, type Group, type Mesh } from 'three'
+import { ERASE_RANGE, pointSegDist, snapPathPoint, useGame } from '../game/store'
+import { PRODUCTION, RESIDENCE_ERAS, RESIDENCE_HALF, PATH_WIDTH, TOWN_TIERS } from '../game/config'
 import { WORLD_RADIUS } from '../game/scenery'
 import { FIELDS } from '../game/fields'
 import { ResidenceModel } from './Residence'
 import { ProductionModel } from './Production'
 
+const noHit = () => null
 type Controls = { enabled: boolean } | null
 
 export function BuildController() {
@@ -42,6 +43,7 @@ export function BuildController() {
 
   const onMove = (e: ThreeEvent<PointerEvent>) => {
     const g = useGame.getState()
+    if (g.refounding) return // first-person survival owns the cursor
     const p = { x: e.point.x, z: e.point.z }
     g.setCursorGround(p)
     if (g.heldId !== null) g.moveHeld(p)
@@ -57,6 +59,7 @@ export function BuildController() {
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
     const g = useGame.getState()
+    if (g.refounding) return // clicks are the survivor's axe, not god-mode actions
     const p = { x: e.point.x, z: e.point.z }
     if (g.buildMode === 'house') g.placeResidence(p)
     else if (g.buildMode === 'lumberyard') g.placeProduction(p, 'lumberyard')
@@ -64,11 +67,14 @@ export function BuildController() {
     else if (g.buildMode === 'quarry') g.placeProduction(p, 'quarry')
     else if (g.buildMode === 'hunter') g.placeProduction(p, 'hunter')
     else if (g.buildMode === 'mine') g.placeProduction(p, 'mine')
+    else if (g.buildMode === 'orichalcummine') g.placeProduction(p, 'orichalcummine')
     else if (g.buildMode === 'smithy') g.placeProduction(p, 'smithy')
     else if (g.buildMode === 'scout') {
       g.sendScoutTo(p)
       g.setBuildMode('none')
-    } else if (g.buildMode === 'path') g.addPathPoint(p)
+    } else if (g.buildMode === 'settle') g.foundSettlement(p) // deselects itself on success
+    else if (g.buildMode === 'path') g.addPathPoint(p)
+    else if (g.buildMode === 'erasePath') g.erasePath(p)
     else {
       // click a forest / berry field to send a villager on ONE manual gather
       // trip (each trip is hand-triggered); otherwise click empty ground to deselect
@@ -97,9 +103,79 @@ export function BuildController() {
         buildMode === 'quarry' ||
         buildMode === 'hunter' ||
         buildMode === 'mine' ||
+        buildMode === 'orichalcummine' ||
         buildMode === 'smithy') && <ProductionGhost kind={buildMode} />}
       {buildMode === 'path' && <PathGhost />}
+      {buildMode === 'erasePath' && <EraseGhost />}
       {buildMode === 'scout' && <ScoutGhost />}
+      {buildMode === 'settle' && <SettleGhost />}
+    </group>
+  )
+}
+
+// highlights (in red) the road segment nearest the cursor — the one a click erases
+function EraseGhost() {
+  const root = useRef<Group>(null)
+  const slab = useRef<Mesh>(null)
+  useFrame(() => {
+    const g = useGame.getState()
+    const c = g.cursorGround
+    let best: { a: { x: number; z: number }; b: { x: number; z: number } } | null = null
+    let bestD = ERASE_RANGE
+    for (const s of g.paths) {
+      const d = pointSegDist(c, s.a, s.b)
+      if (d < bestD) {
+        bestD = d
+        best = s
+      }
+    }
+    if (!root.current || !slab.current) return
+    root.current.visible = !!best
+    if (best) {
+      const dx = best.b.x - best.a.x
+      const dz = best.b.z - best.a.z
+      const len = Math.hypot(dx, dz)
+      root.current.position.set((best.a.x + best.b.x) / 2, 0.06, (best.a.z + best.b.z) / 2)
+      root.current.rotation.y = -Math.atan2(dz, dx)
+      slab.current.scale.x = len + PATH_WIDTH
+    }
+  })
+  return (
+    <group ref={root} visible={false}>
+      <mesh ref={slab} rotation={[-Math.PI / 2, 0, 0]} raycast={noHit}>
+        <planeGeometry args={[1, PATH_WIDTH + 0.3]} />
+        <meshBasicMaterial color="#e0655a" transparent opacity={0.75} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
+// reticle + claimed-land preview while choosing where to found a settlement;
+// turns green where it's allowed, red where it isn't
+const SETTLE_GHOST_RADIUS = TOWN_TIERS[1].territoryRadius * 0.6
+function SettleGhost() {
+  const root = useRef<Group>(null)
+  const disc = useRef<Mesh>(null)
+  const reticle = useRef<Mesh>(null)
+  useFrame(() => {
+    const g = useGame.getState()
+    const c = g.cursorGround
+    if (root.current) root.current.position.set(c.x, 0.06, c.z)
+    const ok = g.canSettleAt(c)
+    const color = ok ? '#7bdc8f' : '#e06a5a'
+    if (disc.current) (disc.current.material as MeshBasicMaterial).color.set(color)
+    if (reticle.current) (reticle.current.material as MeshBasicMaterial).color.set(color)
+  })
+  return (
+    <group ref={root}>
+      <mesh ref={disc} rotation={[-Math.PI / 2, 0, 0]} raycast={noHit}>
+        <ringGeometry args={[SETTLE_GHOST_RADIUS - 0.5, SETTLE_GHOST_RADIUS, 60]} />
+        <meshBasicMaterial color="#7bdc8f" transparent opacity={0.5} />
+      </mesh>
+      <mesh ref={reticle} rotation={[-Math.PI / 2, 0, 0]} raycast={noHit}>
+        <ringGeometry args={[0.5, 0.95, 28]} />
+        <meshBasicMaterial color="#7bdc8f" transparent opacity={0.9} />
+      </mesh>
     </group>
   )
 }
@@ -160,7 +236,7 @@ function ResidenceGhost() {
 function ProductionGhost({
   kind,
 }: {
-  kind: 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'smithy'
+  kind: 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'orichalcummine' | 'smithy'
 }) {
   const root = useRef<Group>(null)
   const material = useGhostMaterial()

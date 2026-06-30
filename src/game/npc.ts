@@ -32,7 +32,19 @@ const SPECS: Spec[] = [
   { name: 'Stonebrook', angle: 5.9, dist: 100, tier: 2 },
 ]
 
-function makeVillage(s: Spec, id: number, r: () => number): NpcVillage {
+/** a village's passive economy (tribute once it's yours), scaling with its era */
+export function villageIncome(tier: number): Resources {
+  return { wood: 0.5 * (tier + 1), food: 0.4 * (tier + 1), stone: 0, mithril: 0, orichalcum: 0, starmetal: 0, weapons: 0 }
+}
+
+/** world-space centres of every NPC village (fields.ts seeds resources near them) */
+export const VILLAGE_SITES = SPECS.map((s) => ({
+  x: Math.cos(s.angle) * s.dist,
+  z: Math.sin(s.angle) * s.dist,
+  tier: s.tier,
+}))
+
+function makeVillage(s: Spec, id: number, r: () => number, nextVid: () => number): NpcVillage {
   const cx = Math.cos(s.angle) * s.dist
   const cz = Math.sin(s.angle) * s.dist
   const center = { x: cx, z: cz }
@@ -55,26 +67,24 @@ function makeVillage(s: Spec, id: number, r: () => number): NpcVillage {
     const a = r() * Math.PI * 2
     const rad = 1.4 + r() * 2.6
     villagers.push({
+      id: nextVid(),
       pos: { x: cx + Math.cos(a) * rad, z: cz + Math.sin(a) * rad },
       heading: r() * Math.PI * 2,
       wanderTarget: null,
       restTimer: r() * 2,
+      target: null,
       bob: r() * 6,
     })
   }
 
-  const income: Resources = {
-    wood: 0.5 * (s.tier + 1),
-    food: 0.4 * (s.tier + 1),
-    stone: 0,
-    mithril: 0,
-    weapons: 0,
-  }
+  const income = villageIncome(s.tier)
   const resources: Resources = {
     wood: 20 + Math.floor(r() * 30),
     food: 20 + Math.floor(r() * 30),
     stone: s.tier >= 2 ? 10 + Math.floor(r() * 15) : 0,
     mithril: 0,
+    orichalcum: 0,
+    starmetal: 0,
     weapons: 0,
   }
 
@@ -97,5 +107,7 @@ function makeVillage(s: Spec, id: number, r: () => number): NpcVillage {
 /** a fresh set of NPC villages (the store owns + mutates these) */
 export function makeNpcVillages(): NpcVillage[] {
   const r = rng(2026)
-  return SPECS.map((s, i) => makeVillage(s, i + 1, r))
+  let vid = 1
+  const nextVid = () => vid++
+  return SPECS.map((s, i) => makeVillage(s, i + 1, r, nextVid))
 }

@@ -9,8 +9,11 @@ import type {
   NpcVillage,
   NpcVillager,
   PathSegment,
+  Endgame,
   ProductionDef,
   ProductionKind,
+  Raid,
+  Refounding,
   ResourceField,
   ResourceType,
   Resources,
@@ -30,13 +33,32 @@ import {
   ANIMAL_RESPAWN,
   ANIMAL_SPEED,
   BATTLE_DURATION,
+  CHOP_REACH,
+  DEER_HP,
+  HUNT_FOOD,
+  PICK_FOOD,
+  TREE_HP,
+  TREE_WOOD,
   CONVERT_RADIUS,
   CONVERT_RATE,
+  DEFEND_RALLY,
   ENGAGE_RADIUS,
-  IRON_TIER,
+  EXPANSION_TIER,
   MARCH_SPEED,
   MAX_PARTY,
+  MEDIEVAL_TIER,
+  METEOR_ANGLE,
+  METEOR_DIST,
+  METEOR_FOUND_RADIUS,
   MITHRIL_TIER,
+  PILLAGE_FRACTION,
+  RAID_CHECK_INTERVAL,
+  RAID_COOLDOWN,
+  RAID_HOME_ADVANTAGE,
+  RAID_MIN_PARTY,
+  REFOUND_FOOD_GOAL,
+  REFOUND_TRIGGER_POP,
+  REFOUND_WOOD_GOAL,
   DISCOVERY_RADIUS,
   EXPLORE_SPACING,
   HUNT_KILL_RANGE,
@@ -47,7 +69,12 @@ import {
   ROAD_INFLUENCE,
   ROAD_SPEED,
   SCOUT_SPEED,
+  SETTLE_COST,
+  SETTLE_MAX_RANGE,
+  SETTLE_MIN_DIST,
+  SETTLER_SPEED,
   TOWN_CLEAR_RADIUS,
+  VILLAGE_CLEAR_RADIUS,
   TOWN_TIERS,
   VILLAGER_COST,
   WALK_SPEED,
@@ -55,18 +82,27 @@ import {
   WANDER_OUTER,
   WORK_STANDOFF,
 } from './config'
-import { FIELDS } from './fields'
-import { makeNpcVillages } from './npc'
+import { FIELDS, FIELD_CLUMPS } from './fields'
+import { SCENERY } from './scenery'
+import { makeNpcVillages, villageIncome } from './npc'
 import { makeAnimals } from './animals'
 import { clearSave, readSave, writeSave, SAVE_VERSION, type SaveData } from './save'
 
 // ---- resource bookkeeping (generic over ResourceType so adding a resource is
 // a config change, not new logic) -------------------------------------------
-export const RESOURCE_TYPES: ResourceType[] = ['wood', 'food', 'stone', 'mithril', 'weapons']
+export const RESOURCE_TYPES: ResourceType[] = [
+  'wood',
+  'food',
+  'stone',
+  'mithril',
+  'orichalcum',
+  'starmetal',
+  'weapons',
+]
 
 /** a zeroed stockpile */
 function emptyResources(): Resources {
-  return { wood: 0, food: 0, stone: 0, mithril: 0, weapons: 0 }
+  return { wood: 0, food: 0, stone: 0, mithril: 0, orichalcum: 0, starmetal: 0, weapons: 0 }
 }
 
 /** can `have` pay `cost`? (resources omitted from a cost are free) */
@@ -100,7 +136,9 @@ const PRODUCTION_KINDS = new Set<string>([
   'quarry',
   'hunter',
   'mine',
+  'orichalcummine',
   'smithy',
+  'starforge',
 ])
 export function isProduction(b: Building): b is Building & { kind: ProductionKind } {
   return PRODUCTION_KINDS.has(b.kind)
@@ -117,6 +155,8 @@ function fieldResource(f: ResourceField): ResourceType {
       return 'stone'
     case 'mithrildeposit':
       return 'mithril'
+    case 'orichalcumdeposit':
+      return 'orichalcum'
   }
 }
 
@@ -143,13 +183,65 @@ function buildingHalf(b: Building): number {
   return isProduction(b) ? PRODUCTION[b.kind].half : RESIDENCE_HALF
 }
 
-// The townhall always sits at the world origin.
+/** materials handed back when you demolish — half of what an equivalent building
+ * (at its current level) would cost to put up now */
+export function demolishRefund(b: Building): Cost {
+  const recon = emptyResources()
+  if (isProduction(b)) {
+    const def = PRODUCTION[b.kind]
+    for (const t of RESOURCE_TYPES) recon[t] += def.cost[t] ?? 0
+    for (let lvl = 1; lvl <= b.level; lvl++) {
+      const up = def.levels[lvl]?.upgradeCost
+      if (up) for (const t of RESOURCE_TYPES) recon[t] += up[t] ?? 0
+    }
+  } else {
+    const era = RESIDENCE_ERAS[b.level]
+    for (const t of RESOURCE_TYPES) recon[t] += era?.buildCost[t] ?? 0
+  }
+  const refund: Cost = {}
+  for (const t of RESOURCE_TYPES) {
+    const half = Math.floor(recon[t] * 0.5)
+    if (half > 0) refund[t] = half
+  }
+  return refund
+}
+
+// The capital's location. Starts at the world origin, but after a capital is
+// destroyed and refounded it MOVES to wherever the survivor rebuilds. It's a
+// shared mutable object so everything that reads TOWN_CENTER.x/.z (territory,
+// hauling, wandering, placement) tracks the move with no extra plumbing.
 export const TOWN_CENTER: Vec2 = { x: 0, z: 0 }
+
+// Every choppable tree in the world: the forest clumps PLUS the scattered
+// scenery trees. In first-person refounding each takes a few axe swings, then
+// it's felled (added to choppedTrees) and yields wood. Ids are namespaced so
+// each renderer (Fields for forests `${fieldId}:${i}`, Scenery for solo `s${i}`)
+// can hide its own felled trees.
+export const CHOP_TREES: { id: string; pos: Vec2 }[] = [
+  ...FIELDS.filter((f) => f.type === 'forest').flatMap((f) =>
+    (FIELD_CLUMPS[f.id] ?? []).map((c, i) => ({ id: `${f.id}:${i}`, pos: { x: c.x, z: c.z } })),
+  ),
+  ...SCENERY.trees.map((t, i) => ({ id: `s${i}`, pos: { x: t.x, z: t.z } })),
+]
 
 let nextVillagerId = 1
 let nextBuildingId = 1
 let nextPathId = 1
 let nextToastId = 1
+let nextNpcVillagerId = 1
+let nextNpcVillageId = 1
+
+// names given to settlements you found yourself, out in the wilderness
+const SETTLEMENT_NAMES = [
+  'Newhaven',
+  'Farreach',
+  'Highmoor',
+  'Greyford',
+  'Westmark',
+  'Thornhold',
+  'Oakhollow',
+  'Riverend',
+]
 
 // --- vector helpers ----------------------------------------------------------
 function dist(a: Vec2, b: Vec2): number {
@@ -171,8 +263,11 @@ function moveToward(pos: Vec2, target: Vec2, step: number): boolean {
   return false
 }
 
+/** how close a click must be to a road segment to erase it */
+export const ERASE_RANGE = 2.6
+
 /** distance from point p to segment a-b */
-function pointSegDist(p: Vec2, a: Vec2, b: Vec2): number {
+export function pointSegDist(p: Vec2, a: Vec2, b: Vec2): number {
   const vx = b.x - a.x
   const vz = b.z - a.z
   const wx = p.x - a.x
@@ -310,9 +405,10 @@ function roadRouteTo(from: Vec2, to: Vec2, paths: PathSegment[]): Vec2[] | null 
   return pts
 }
 
-/** does a road connect this spot to the townhall? (used for the "no road" cue) */
-export function roadConnected(pos: Vec2, paths: PathSegment[]): boolean {
-  return roadRouteTo(pos, TOWN_CENTER, paths) !== null
+/** does a road connect this spot to a hub? (used for the "no road" cue; the hub
+ * defaults to the townhall but is the nearest owned-village depot for outposts) */
+export function roadConnected(pos: Vec2, paths: PathSegment[], target: Vec2 = TOWN_CENTER): boolean {
+  return roadRouteTo(pos, target, paths) !== null
 }
 
 /**
@@ -331,32 +427,50 @@ export function stoneUnlocked(tierIndex: number): boolean {
 export function resourceUnlocked(type: ResourceType, tierIndex: number): boolean {
   if (type === 'wood' || type === 'food') return true
   if (type === 'stone') return stoneUnlocked(tierIndex)
-  if (type === 'weapons') return tierIndex >= IRON_TIER // weapons arrive with the Iron Age
+  // weapons AND orichalcum (the better metal) both arrive with the Age of Expansion
+  if (type === 'weapons' || type === 'orichalcum') return tierIndex >= EXPANSION_TIER
+  if (type === 'starmetal') return false // shown only once the meteor's Starforge opens
   return tierIndex >= MITHRIL_TIER // mithril arrives with the Mithril Age
 }
 
-// While drawing a path, a point this close to a key spot (the townhall or a
-// building) snaps onto it — so roads reliably *connect* instead of landing just
-// short of, or past, what they're meant to join.
+// While drawing a path, a point this close to a key spot snaps onto it — so
+// roads reliably *connect* instead of landing just short of, or past, what
+// they're meant to join. Individual buildings need a precise click; settlement
+// cores (capital + owned villages) are big landmarks, so they snap from much
+// further out — clicking anywhere on/near a distant village hub joins the road.
 const PATH_SNAP = 2.6
+const HUB_SNAP = 8
 
 /**
- * Snap a path point to the nearest key spot (townhall / any building) within
- * PATH_SNAP, else leave it where it is. `target` is the snapped-to spot (for a
- * placement cue), or null when nothing was in range.
+ * Snap a path point to the nearest key spot — a settlement core (within
+ * HUB_SNAP) or a building (within PATH_SNAP) — else leave it where it is.
+ * `target` is the snapped-to spot (for a placement cue), or null if none.
  */
 export function snapPathPoint(
   p: Vec2,
   buildings: Building[],
+  hubs: Vec2[] = [],
 ): { point: Vec2; target: Vec2 | null } {
-  const candidates: Vec2[] = [TOWN_CENTER, ...buildings.map((b) => b.pos)]
   let best: Vec2 | null = null
-  let bestD = PATH_SNAP
-  for (const q of candidates) {
+  let bestD = Infinity
+  // settlement cores (townhalls) take PRIORITY: a road near a village joins its
+  // townhall, not a building (e.g. a mine) that happens to sit near the centre.
+  // Wide snap, so a far/imprecise click still connects to the hub.
+  for (const q of [TOWN_CENTER, ...hubs]) {
     const d = dist(p, q)
-    if (d < bestD) {
+    if (d < HUB_SNAP && d < bestD) {
       bestD = d
       best = q
+    }
+  }
+  // only snap to an individual building when you're NOT near any townhall
+  if (!best) {
+    for (const b of buildings) {
+      const d = dist(p, b.pos)
+      if (d < PATH_SNAP && d < bestD) {
+        bestD = d
+        best = b.pos
+      }
     }
   }
   return best ? { point: { x: best.x, z: best.z }, target: best } : { point: p, target: null }
@@ -380,11 +494,11 @@ function faceToward(v: Villager, target: Vec2) {
   v.heading = Math.atan2(target.x - v.pos.x, target.z - v.pos.z)
 }
 
-// spawn position: a small ring around the campfire
+// spawn position: a small ring around the campfire (wherever the capital is)
 function spawnSpot(index: number): Vec2 {
   const a = (index / 6) * Math.PI * 2
   const r = 1.7
-  return { x: Math.cos(a) * r, z: Math.sin(a) * r }
+  return { x: TOWN_CENTER.x + Math.cos(a) * r, z: TOWN_CENTER.z + Math.sin(a) * r }
 }
 
 function makeVillager(index: number): Villager {
@@ -405,8 +519,115 @@ function makeVillager(index: number): Villager {
     scoutReturning: false,
     huntAnimalId: null,
     targetVillageId: null,
+    defendTarget: null,
     bob: index * 1.7,
   }
+}
+
+/** the next id for a freshly-spawned NPC villager (e.g. raiders re-garrisoning a retaken town) */
+function nextNpcVid(): number {
+  return nextNpcVillagerId++
+}
+
+// a captured village's inhabitants join your realm: each NPC villager becomes a
+// real, commandable villager standing where it was (it garrisons there, since
+// idle villagers loiter around their nearest hub — see nearestHub)
+function recruitFrom(village: NpcVillage): Villager[] {
+  const out = village.villagers.map((nv) => {
+    const pv = makeVillager(0)
+    pv.pos = { x: nv.pos.x, z: nv.pos.z }
+    pv.heading = nv.heading
+    pv.bob = nv.bob
+    pv.wanderTarget = null
+    return pv
+  })
+  village.villagers = [] // they've left the AI village and joined you
+  return out
+}
+
+// a brand-new settlement founded in the wilderness — a player-owned hub from
+// scratch. It reuses the whole owned-village system (territory, haul depot,
+// pop/build cap, upgrades); its economy is whatever you build there.
+function makeFoundedSettlement(center: Vec2, id: number): NpcVillage {
+  const tier = 1
+  const model = RESIDENCE_ERAS[tier].model
+  const huts: NpcVillage['huts'] = []
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.5
+    const rad = 2.8 + (i % 2) * 1.2
+    const hx = center.x + Math.cos(a) * rad
+    const hz = center.z + Math.sin(a) * rad
+    huts.push({ pos: { x: hx, z: hz }, rot: Math.atan2(center.x - hx, center.z - hz), model })
+  }
+  return {
+    id,
+    name: SETTLEMENT_NAMES[(((id - 3) % SETTLEMENT_NAMES.length) + SETTLEMENT_NAMES.length) % SETTLEMENT_NAMES.length],
+    discovered: true,
+    owner: 'player',
+    influence: 100,
+    center: { x: center.x, z: center.z },
+    tierIndex: tier,
+    territoryRadius: TOWN_TIERS[tier].territoryRadius * 0.6,
+    resources: emptyResources(),
+    income: emptyResources(), // founded from scratch — you build its economy yourself
+    huts,
+    villagers: [],
+  }
+}
+
+// a neutral village musters a raiding party against your NEAREST settlement
+// (capital or an owned outpost); your idle villagers nearby rally to defend.
+function startRaid(from: NpcVillage) {
+  const settlements: { center: Vec2; villageId: number | null }[] = [
+    { center: TOWN_CENTER, villageId: null },
+    ...useGame
+      .getState()
+      .npcVillages.filter((v) => v.owner === 'player')
+      .map((v) => ({ center: v.center, villageId: v.id as number | null })),
+  ]
+  let tgt = settlements[0]
+  let tgtD = dist(from.center, tgt.center)
+  for (const sset of settlements) {
+    const d = dist(from.center, sset.center)
+    if (d < tgtD) (tgtD = d), (tgt = sset)
+  }
+  const party = from.villagers.slice(0, Math.max(1, from.villagers.length - 1))
+  const clash = approachSpot(tgt.center, from.center, 5)
+  for (const nv of party) nv.target = { x: clash.x, z: clash.z }
+  // rally idle villagers near the threatened settlement to the clash line
+  for (const v of useGame.getState().villagers) {
+    if (
+      v.state === 'idle' &&
+      v.workplaceId === null &&
+      v.forageFieldId === null &&
+      dist(v.pos, tgt.center) <= DEFEND_RALLY
+    ) {
+      v.state = 'defending'
+      v.defendTarget = { x: clash.x, z: clash.z }
+      v.wanderTarget = null
+    }
+  }
+  const raid: Raid = {
+    fromVillageId: from.id,
+    target: { x: tgt.center.x, z: tgt.center.z },
+    targetVillageId: tgt.villageId,
+    clash,
+    phase: 'march',
+    timer: 0,
+    defenderWins: false,
+    raiderIds: party.map((nv) => nv.id),
+    doomedRaiders: [],
+    doomedDefenders: [],
+  }
+  useGame.getState().raidCooldowns[from.id] = RAID_COOLDOWN
+  useGame.setState({ raids: [...useGame.getState().raids, raid] })
+  const where =
+    tgt.villageId == null
+      ? 'your capital'
+      : useGame.getState().npcVillages.find((v) => v.id === tgt.villageId)?.name ?? 'your town'
+  useGame
+    .getState()
+    .pushToast(`${from.name} is raiding ${where}! Rally idle people nearby to defend.`, 'warn')
 }
 
 // a wild animal ambling within its home range, pausing on arrival
@@ -440,24 +661,49 @@ function nearestPrey(animals: Animal[], p: Vec2, range: number): Animal | null {
   return best
 }
 
-// a loiter point in the ring around the townhall, near the villager's current
-// angle so they circle the tent rather than cutting straight across it
-function townWanderSpot(from: Vec2): Vec2 {
-  const cur = Math.atan2(from.z - TOWN_CENTER.z, from.x - TOWN_CENTER.x)
-  const a = cur + (Math.random() - 0.5) * 1.7
-  const r = WANDER_INNER + Math.random() * (WANDER_OUTER - WANDER_INNER)
-  return { x: TOWN_CENTER.x + Math.cos(a) * r, z: TOWN_CENTER.z + Math.sin(a) * r }
+// Your townhall plus every village that has joined you. Each is both a drop-off
+// depot (workers haul to the nearest one) and an idle-loiter anchor (off-duty
+// villagers amble around the nearest one) — so a captured village becomes a real
+// forward base instead of a ~90-unit round-trip back home.
+export function nearestHub(p: Vec2, npcVillages: NpcVillage[], extra?: Vec2 | null): Vec2 {
+  let best = TOWN_CENTER
+  let bestD = dist(p, TOWN_CENTER)
+  for (const v of npcVillages) {
+    if (v.owner !== 'player') continue
+    const d = dist(p, v.center)
+    if (d < bestD) {
+      bestD = d
+      best = v.center
+    }
+  }
+  // the opened meteor's Starforge stockpiles locally, so its smiths don't trek
+  // the whole continent back home with every bar of Starmetal
+  if (extra) {
+    const d = dist(p, extra)
+    if (d < bestD) best = extra
+  }
+  return best
 }
 
-// gently amble between spots around the townhall, pausing on arrival
-function wanderAroundTown(v: Villager, dt: number) {
+// a loiter point in the ring around a hub, near the villager's current angle so
+// they circle it rather than cutting straight across it
+function hubWanderSpot(from: Vec2, center: Vec2): Vec2 {
+  const cur = Math.atan2(from.z - center.z, from.x - center.x)
+  const a = cur + (Math.random() - 0.5) * 1.7
+  const r = WANDER_INNER + Math.random() * (WANDER_OUTER - WANDER_INNER)
+  return { x: center.x + Math.cos(a) * r, z: center.z + Math.sin(a) * r }
+}
+
+// gently amble between spots around the nearest hub (townhall / owned village),
+// pausing on arrival
+function wanderAroundHub(v: Villager, npcVillages: NpcVillage[], dt: number) {
   if (v.wanderTarget && dist(v.pos, v.wanderTarget) > 0.3) {
     faceToward(v, v.wanderTarget)
     moveToward(v.pos, v.wanderTarget, WALK_SPEED * 0.42 * dt)
   } else {
     v.workTimer += dt
     if (!v.wanderTarget || v.workTimer >= IDLE_PAUSE) {
-      v.wanderTarget = townWanderSpot(v.pos)
+      v.wanderTarget = hubWanderSpot(v.pos, nearestHub(v.pos, npcVillages))
       v.workTimer = 0
     }
   }
@@ -529,8 +775,26 @@ interface GameState {
   animals: Animal[]
   /** in-progress melees at villages (transient; not persisted) */
   battles: Battle[]
+  /** simulation speed multiplier — 1×/2×/4× (transient; the tick substeps by it) */
+  gameSpeed: number
+  /** incoming raids on your settlements (transient; not persisted) */
+  raids: Raid[]
+  /** are RANDOM/automatic raids enabled? off by default — debug-toggleable (transient) */
+  raidsEnabled: boolean
+  /** seconds since the last "should anyone raid?" check (transient) */
+  raidScan: number
+  /** per-village cooldown before it may raid again, by village id (transient) */
+  raidCooldowns: Record<number, number>
   /** fog-of-war breadcrumbs (spots a scout has explored) */
   explored: Vec2[]
+  /** non-null while you're refounding after a capital loss (first-person survivor) */
+  refounding: Refounding | null
+  /** the fallen-star endgame arc (a meteor at Medieval), or null before it begins */
+  endgame: Endgame | null
+  /** forest trees felled by the survivor's axe this session (ids hidden from render) */
+  choppedTrees: string[]
+  /** in-progress axe damage on standing trees, by tree id (transient) */
+  treeHits: Record<string, number>
 
   buildings: Building[]
   paths: PathSegment[]
@@ -547,6 +811,8 @@ interface GameState {
   firstFoodDelivered: boolean
   /** building/townhall currently open in the management panel */
   selection: Selection
+  /** a point the camera is smoothly panning to (settlement switch), or null */
+  cameraFocus: Vec2 | null
 
   // selectors / derived
   popCap: () => number
@@ -557,7 +823,9 @@ interface GameState {
   atBuildCap: () => boolean
   territoryRadius: () => number
   canAfford: (cost: Partial<Resources>) => boolean
-  canPlaceAt: (p: Vec2, half: number) => boolean
+  /** is this spot inside your realm — home borders OR any owned village's? */
+  inTerritory: (p: Vec2) => boolean
+  canPlaceAt: (p: Vec2, half: number, onField?: boolean) => boolean
   canPlaceProduction: (p: Vec2, kind: ProductionKind) => boolean
 
   // simulation
@@ -576,21 +844,46 @@ interface GameState {
   placeProduction: (p: Vec2, kind: ProductionKind) => void
   staffBuilding: (buildingId: number) => void
   upgradeProduction: (buildingId: number) => void
+  /** tear down a building: free its slot + workers, reclaim half the materials */
+  demolishBuilding: (buildingId: number) => void
   gatherField: (fieldId: number) => void
   addPathPoint: (p: Vec2) => void
   endPath: () => void
+  /** remove the road segment nearest the click (within ERASE_RANGE), if any */
+  erasePath: (p: Vec2) => void
 
   // selection
   selectBuilding: (id: number) => void
   selectTownhall: () => void
   selectNpc: (id: number) => void
+  selectMeteor: () => void
   clearSelection: () => void
+  /** smoothly pan the camera to a settlement (set null to cancel) */
+  focusCamera: (p: Vec2 | null) => void
   /** send the nearest idle villager to scout (and reveal fog toward) a spot */
   sendScoutTo: (p: Vec2) => void
+  /** is this spot valid for a NEW settlement? (unclaimed, in range, well-spaced) */
+  canSettleAt: (p: Vec2) => boolean
+  /** dispatch the nearest idle villager to march out and found a settlement here */
+  foundSettlement: (p: Vec2) => void
   /** muster a war party (idle villagers armed with weapons) to attack a village */
   attackVillage: (villageId: number) => void
   /** send an idle villager to a village as a missionary to convert it */
   sendMissionary: (villageId: number) => void
+  /** advance an owned village one era (its own borders / housing / tribute grow) */
+  upgradeVillage: (villageId: number) => void
+  /** open the meteor: needs the whole continent owned + every storage maxed, drains them, raises the Starforge */
+  openMeteor: () => void
+  /** pick the endgame path once starmetal is maxed — spends it to build a portal / starship */
+  chooseSpecialty: (s: 'magic' | 'tech') => void
+  /** send your people through the portal / aboard the ship — the run is won */
+  sendPeople: () => void
+  /** the capital is destroyed: drop into first person as the lone survivor */
+  destroyCapital: () => void
+  /** first-person left-click: chop the tree / pick the berries / hit the deer in front */
+  survivorChop: () => void
+  /** found a new city once the survivor has gathered enough wood + food */
+  foundNewCity: () => void
 
   // ---- persistence + debug ----
   saveGame: () => void
@@ -599,6 +892,18 @@ interface GameState {
   debugSetupEra: (tier: number) => void
   /** debug: reveal every NPC village */
   debugDiscoverAll: () => void
+  /** debug: force the given neutral village to raid your nearest settlement now */
+  debugRaid: (villageId: number) => void
+  /** debug: turn random/automatic raids on or off */
+  toggleRaids: () => void
+  /** set the simulation speed multiplier (1, 2, or 4) */
+  setGameSpeed: (n: number) => void
+  /** debug: jump to Medieval, own every village, max all storages, reveal the meteor */
+  debugEndgame: () => void
+  /** debug: open the meteor (if needed) and brim the Starmetal store, ready to choose a path */
+  debugStarforgeFull: () => void
+  /** debug: destroy the capital, then auto-gather + refound to test the whole cycle */
+  debugRefound: () => void
 
   // feedback
   pushToast: (msg: string, kind?: Toast['kind']) => void
@@ -689,6 +994,8 @@ type PersistSlice = Pick<
   | 'objectiveStep'
   | 'firstWoodDelivered'
   | 'firstFoodDelivered'
+  | 'refounding'
+  | 'endgame'
 >
 
 /** a brand-new game (also resets the id counters) */
@@ -696,30 +1003,49 @@ function freshState(): PersistSlice {
   nextVillagerId = 1
   nextBuildingId = 1
   nextPathId = 1
+  TOWN_CENTER.x = 0 // a new game starts the capital back at the origin
+  TOWN_CENTER.z = 0
+  const npcVillages = makeNpcVillages()
+  nextNpcVillagerId =
+    npcVillages.reduce((m, v) => v.villagers.reduce((mm, nv) => Math.max(mm, nv.id), m), 0) + 1
+  nextNpcVillageId = npcVillages.reduce((m, v) => Math.max(m, v.id), 0) + 1
   return {
     // start poor: not enough to build a lumberyard or upgrade the townhall.
-    resources: { wood: 5, food: 20, stone: 0, mithril: 0, weapons: 0 },
+    resources: { wood: 5, food: 20, stone: 0, mithril: 0, orichalcum: 0, starmetal: 0, weapons: 0 },
     villagers: [makeVillager(0), makeVillager(1), makeVillager(2)],
     tierIndex: 0,
-    npcVillages: makeNpcVillages(),
+    npcVillages,
     explored: [],
     buildings: [],
     paths: [],
     objectiveStep: 0,
     firstWoodDelivered: false,
     firstFoodDelivered: false,
+    refounding: null,
+    endgame: null,
   }
 }
 
 /** restore a save: sanitise it and resume id counters past the loaded ids */
 function applySave(d: SaveData): PersistSlice {
+  // mid-flight transient action states don't survive a reload — stand them down
   const villagers = d.villagers.map((v) =>
-    v.state === 'held' ? { ...v, state: 'idle' as const } : v,
+    v.state === 'held' || v.state === 'defending'
+      ? { ...v, state: 'idle' as const, defendTarget: null }
+      : v,
   )
+  // raids are transient too — send any caught-out raiders home (clear their target)
+  for (const village of d.npcVillages)
+    for (const nv of village.villagers) nv.target = null
   const maxId = (arr: { id: number }[]) => arr.reduce((m, x) => Math.max(m, x.id), 0)
   nextVillagerId = maxId(villagers) + 1
   nextBuildingId = maxId(d.buildings) + 1
   nextPathId = maxId(d.paths) + 1
+  nextNpcVillagerId =
+    d.npcVillages.reduce((m, v) => v.villagers.reduce((mm, nv) => Math.max(mm, nv.id), m), 0) + 1
+  nextNpcVillageId = d.npcVillages.reduce((m, v) => Math.max(m, v.id), 0) + 1
+  TOWN_CENTER.x = d.townCenter?.x ?? 0 // restore the (possibly relocated) capital
+  TOWN_CENTER.z = d.townCenter?.z ?? 0
   return {
     resources: d.resources,
     tierIndex: d.tierIndex,
@@ -731,6 +1057,8 @@ function applySave(d: SaveData): PersistSlice {
     objectiveStep: d.objectiveStep,
     firstWoodDelivered: d.firstWoodDelivered,
     firstFoodDelivered: d.firstFoodDelivered,
+    refounding: d.refounding ?? null,
+    endgame: d.endgame ?? null,
   }
 }
 
@@ -754,6 +1082,9 @@ function toSave(s: GameState): SaveData {
     objectiveStep: s.objectiveStep,
     firstWoodDelivered: s.firstWoodDelivered,
     firstFoodDelivered: s.firstFoodDelivered,
+    refounding: s.refounding,
+    endgame: s.endgame,
+    townCenter: { x: TOWN_CENTER.x, z: TOWN_CENTER.z },
   }
 }
 
@@ -763,6 +1094,13 @@ export const useGame = create<GameState>((set, get) => ({
   // ambient wildlife — regenerated each session, not part of the save
   animals: makeAnimals(),
   battles: [],
+  raids: [],
+  raidsEnabled: false, // random raids OFF for now — toggle in the debug menu
+  gameSpeed: 1,
+  raidScan: 0,
+  raidCooldowns: {},
+  choppedTrees: [],
+  treeHits: {},
 
   // transient UI state — never persisted
   buildMode: 'none',
@@ -772,23 +1110,48 @@ export const useGame = create<GameState>((set, get) => ({
   hover: null,
   toasts: [],
   selection: null,
+  cameraFocus: null,
 
   popCap: () => {
     const s = get()
-    return TOWN_TIERS[s.tierIndex].popCap + residencePop(s.buildings)
+    let cap = TOWN_TIERS[s.tierIndex].popCap + residencePop(s.buildings)
+    // every captured village houses its own people (plus any houses you add there)
+    for (const v of s.npcVillages) if (v.owner === 'player') cap += TOWN_TIERS[v.tierIndex].popCap
+    return cap
   },
 
   storageCap: () => TOWN_TIERS[get().tierIndex].storageCap,
-  buildCap: () => TOWN_TIERS[get().tierIndex].buildCap,
-  atBuildCap: () => get().buildings.length >= TOWN_TIERS[get().tierIndex].buildCap,
+  buildCap: () => {
+    const s = get()
+    let cap = TOWN_TIERS[s.tierIndex].buildCap
+    // every town you own carries its own build allowance
+    for (const v of s.npcVillages) if (v.owner === 'player') cap += TOWN_TIERS[v.tierIndex].buildCap
+    return cap
+  },
+  atBuildCap: () => get().buildings.length >= get().buildCap(),
   territoryRadius: () => TOWN_TIERS[get().tierIndex].territoryRadius,
 
   canAfford: (cost) => affords(get().resources, cost),
 
-  canPlaceAt: (p, half) => {
-    if (dist(p, TOWN_CENTER) > get().territoryRadius()) return false // outside your borders
-    if (dist(p, TOWN_CENTER) < TOWN_CLEAR_RADIUS + half) return false
-    for (const b of get().buildings) {
+  inTerritory: (p) => {
+    const s = get()
+    if (dist(p, TOWN_CENTER) <= TOWN_TIERS[s.tierIndex].territoryRadius) return true
+    for (const v of s.npcVillages)
+      if (v.owner === 'player' && dist(p, v.center) <= v.territoryRadius) return true
+    return false
+  },
+
+  canPlaceAt: (p, half, onField = false) => {
+    const s = get()
+    if (!s.inTerritory(p)) return false // outside your realm
+    // a mine/quarry sitting ON its resource deposit is exempt from the keep-clear
+    // rings around settlement cores — the deposit is the whole reason to build there
+    if (!onField) {
+      if (dist(p, TOWN_CENTER) < TOWN_CLEAR_RADIUS + half) return false
+      for (const v of s.npcVillages)
+        if (v.owner === 'player' && dist(p, v.center) < VILLAGE_CLEAR_RADIUS + half) return false
+    }
+    for (const b of s.buildings) {
       if (dist(p, b.pos) < buildingHalf(b) + half + 0.4) return false
     }
     return true
@@ -798,28 +1161,50 @@ export const useGame = create<GameState>((set, get) => ({
   // for field-less ones like the hunter's lodge)
   canPlaceProduction: (p, kind) => {
     const def = PRODUCTION[kind]
-    if (!get().canPlaceAt(p, def.half)) return false
-    if (!def.fieldType) return true
-    return FIELDS.some(
-      (f) => f.type === def.fieldType && dist(p, f.pos) <= f.radius + FIELD_BUILD_RANGE,
-    )
+    const onField =
+      !!def.fieldType &&
+      FIELDS.some((f) => f.type === def.fieldType && dist(p, f.pos) <= f.radius + FIELD_BUILD_RANGE)
+    if (def.fieldType && !onField) return false // must sit on its matching field
+    return get().canPlaceAt(p, def.half, onField)
   },
 
   tick: (dt) => {
-    const { villagers, buildings, paths, resources } = get()
+    const { villagers, buildings, paths, resources, npcVillages } = get()
+    const refounding = get().refounding
+
+    // at the Medieval era a meteor falls far to the south — the endgame begins
+    if (get().tierIndex >= MEDIEVAL_TIER && !get().endgame) {
+      set({
+        endgame: {
+          meteorPos: { x: Math.cos(METEOR_ANGLE) * METEOR_DIST, z: Math.sin(METEOR_ANGLE) * METEOR_DIST },
+          found: false,
+          open: false,
+          specialty: null,
+          built: false,
+          won: false,
+        },
+      })
+      get().pushToast('A star falls from the heavens — a meteor has crashed in the far wilds!', 'warn')
+    }
+    // once cracked open, the Starforge is a drop-off hub of its own
+    const eg = get().endgame
+    const forgeHub = eg && eg.open && !eg.won ? eg.meteorPos : null
     const cap = TOWN_TIERS[get().tierIndex].storageCap
     const gained = emptyResources()
     const discovered: string[] = [] // villages a scout reached this tick
     const reached = new Set<number>() // villages a war party reached this tick (start a battle)
+    const founded: Vec2[] = [] // spots where a settler founded a new settlement this tick
 
     // a worker's resource is "full" once the live stockpile (incl. this tick's
     // deliveries so far) hits the cap — those workers loiter instead of working.
     const isFull = (type: ResourceType) => resources[type] + gained[type] >= cap
 
     for (const v of villagers) {
+      // the lone survivor is driven manually in first person — skip its AI
+      if (refounding && v.id === refounding.survivorId) continue
       switch (v.state) {
         case 'idle': {
-          wanderAroundTown(v, dt)
+          wanderAroundHub(v, npcVillages, dt)
           break
         }
 
@@ -840,6 +1225,12 @@ export const useGame = create<GameState>((set, get) => ({
               village.discovered = true
               discovered.push(village.name)
             }
+          }
+          // a scout passing the fallen star reveals it (the endgame meteor)
+          const eg = get().endgame
+          if (eg && !eg.found && dist(v.pos, eg.meteorPos) <= METEOR_FOUND_RADIUS) {
+            set({ endgame: { ...eg, found: true } })
+            get().pushToast('Your scout reached the fallen star — something stirs within.', 'good')
           }
           if (reached) {
             if (v.scoutReturning) {
@@ -907,6 +1298,33 @@ export const useGame = create<GameState>((set, get) => ({
           break
         }
 
+        case 'defending': {
+          // rally to the clash point and hold the line against the raiders
+          if (!v.defendTarget) {
+            v.state = 'idle'
+            break
+          }
+          faceToward(v, v.defendTarget)
+          if (dist(v.pos, v.defendTarget) > 1.5) moveToward(v.pos, v.defendTarget, MARCH_SPEED * dt)
+          break
+        }
+
+        case 'settling': {
+          // a settler marches out; on arrival it founds a new settlement here
+          if (!v.scoutTarget) {
+            v.state = 'idle'
+            break
+          }
+          faceToward(v, v.scoutTarget)
+          if (moveToward(v.pos, v.scoutTarget, SETTLER_SPEED * dt)) {
+            founded.push({ x: v.pos.x, z: v.pos.z })
+            v.state = 'idle' // the founder now garrisons the new settlement
+            v.scoutTarget = null
+            v.wanderTarget = null
+          }
+          break
+        }
+
         case 'waiting': {
           const b = v.workplaceId != null ? buildings.find((x) => x.id === v.workplaceId) : null
           const f = v.forageFieldId != null ? FIELDS.find((x) => x.id === v.forageFieldId) : null
@@ -924,7 +1342,7 @@ export const useGame = create<GameState>((set, get) => ({
             v.route = null
             v.wanderTarget = null
           } else {
-            wanderAroundTown(v, dt)
+            wanderAroundHub(v, npcVillages, dt)
           }
           break
         }
@@ -1085,7 +1503,9 @@ export const useGame = create<GameState>((set, get) => ({
         }
 
         case 'hauling': {
-          if (v.route === null) beginTrip(v, TOWN_CENTER, paths)
+          // haul to the nearest hub (townhall or an owned village), so an outpost
+          // building drops off locally instead of trekking all the way home
+          if (v.route === null) beginTrip(v, nearestHub(v.pos, npcVillages, forgeHub), paths)
           // deposit on arrival within DEPOSIT_RADIUS; the road-exit cut keeps the
           // worker from overshooting the base when a path is drawn past it
           if (advanceRoute(v, paths, dt, ROAD_EXIT, DEPOSIT_RADIUS)) {
@@ -1114,12 +1534,15 @@ export const useGame = create<GameState>((set, get) => ({
       }
     }
 
+    // (refounding harvesting is click-driven — see survivorChop)
+
     // war parties, conversions & the village economy. Loot and tribute both feed
     // `gained`, so this must run BEFORE the resource apply.
     {
       const conquered: string[] = []
       const converted: string[] = []
       const dead = new Set<number>()
+      const recruited: Villager[] = [] // a won village's people join your ranks
       const battles = get().battles
 
       // a war party that reached a (still-neutral) village starts a melee
@@ -1166,6 +1589,7 @@ export const useGame = create<GameState>((set, get) => ({
           village.owner = 'player'
           village.influence = 100
           for (const t of RESOURCE_TYPES) gained[t] += village.resources[t] // loot the stockpile
+          recruited.push(...recruitFrom(village)) // its people become your villagers
           conquered.push(village.name)
         }
         for (const x of villagers)
@@ -1180,6 +1604,7 @@ export const useGame = create<GameState>((set, get) => ({
       for (const village of get().npcVillages) {
         if (village.owner === 'neutral' && village.influence >= 100) {
           village.owner = 'player'
+          recruited.push(...recruitFrom(village)) // its people become your villagers
           converted.push(village.name)
           for (const x of villagers)
             if (x.state === 'converting' && x.targetVillageId === village.id) {
@@ -1200,9 +1625,174 @@ export const useGame = create<GameState>((set, get) => ({
         }
       }
       if (conquered.length || converted.length) set({ npcVillages: [...get().npcVillages] })
-      if (dead.size) set({ villagers: get().villagers.filter((x) => !dead.has(x.id)) })
+      if (dead.size || recruited.length)
+        set({ villagers: [...get().villagers.filter((x) => !dead.has(x.id)), ...recruited] })
       for (const name of conquered) get().pushToast(`${name} conquered — it joins your realm!`, 'good')
       for (const name of converted) get().pushToast(`${name} converted — it joins your realm!`, 'good')
+    }
+
+    // ---- raids: a neutral village marches on YOU; rally a defence or lose ----
+    {
+      const cd = get().raidCooldowns
+      for (const id in cd) cd[id] = Math.max(0, cd[id] - dt)
+
+      const deadDefenders = new Set<number>()
+      const deadRaiders = new Set<number>()
+      const finished: Raid[] = []
+      const resolveToasts: { msg: string; kind: Toast['kind'] }[] = []
+      let villagesChanged = false
+      let refoundAfter = false // a capital wipe drops you into the refounding survival mode
+
+      const standDownDefenders = () => {
+        for (const v of get().villagers)
+          if (v.state === 'defending') {
+            v.state = 'idle'
+            v.defendTarget = null
+          }
+      }
+
+      for (const raid of get().raids) {
+        const from = get().npcVillages.find((v) => v.id === raid.fromVillageId)
+        const liveRaiders = from ? from.villagers.filter((nv) => raid.raiderIds.includes(nv.id)) : []
+        // raid fizzles if the attacker is gone, you took it, or every raider fell
+        if (!from || from.owner !== 'neutral' || liveRaiders.length === 0) {
+          for (const nv of liveRaiders) if (from) nv.target = { x: from.center.x, z: from.center.z }
+          standDownDefenders()
+          finished.push(raid)
+          continue
+        }
+
+        if (raid.phase === 'march') {
+          // the melee begins once a raider reaches the clash line
+          if (!liveRaiders.some((nv) => dist(nv.pos, raid.clash) <= ENGAGE_RADIUS)) continue
+          raid.phase = 'fight'
+          raid.timer = 0
+          const defenders = get().villagers.filter(
+            (v) => v.state === 'defending' && dist(v.pos, raid.clash) <= DEFEND_RALLY,
+          )
+          // outcome: raider count × their age vs your defenders × your age (× home edge)
+          const atk = liveRaiders.length * (0.8 + from.tierIndex * 0.25)
+          const def = defenders.length * (0.8 + get().tierIndex * 0.25) * RAID_HOME_ADVANTAGE
+          raid.defenderWins = def >= atk
+          const stagger = (n: number, pool: { id: number }[]) =>
+            pool.slice(0, Math.max(0, n)).map((x) => ({
+              id: x.id,
+              at: 0.8 + Math.random() * (BATTLE_DURATION - 1.4),
+              dead: false,
+            }))
+          // the loser takes the brunt; the winner pays a smaller toll
+          raid.doomedRaiders = stagger(
+            raid.defenderWins ? Math.ceil(liveRaiders.length * 0.6) : Math.floor(liveRaiders.length * 0.3),
+            liveRaiders,
+          )
+          raid.doomedDefenders = stagger(
+            raid.defenderWins ? Math.floor(defenders.length * 0.2) : Math.ceil(defenders.length * 0.7),
+            defenders,
+          )
+          continue
+        }
+
+        // phase === 'fight': both sides fall one-by-one, then it resolves
+        raid.timer += dt
+        for (const d of raid.doomedRaiders)
+          if (!d.dead && raid.timer >= d.at) (d.dead = true), deadRaiders.add(d.id)
+        for (const d of raid.doomedDefenders)
+          if (!d.dead && raid.timer >= d.at) (d.dead = true), deadDefenders.add(d.id)
+        if (raid.timer < BATTLE_DURATION) continue
+        finished.push(raid)
+
+        const survivors = from.villagers.filter(
+          (nv) => raid.raiderIds.includes(nv.id) && !deadRaiders.has(nv.id),
+        )
+        for (const nv of survivors) nv.target = { x: from.center.x, z: from.center.z } // withdraw home
+
+        if (raid.defenderWins) {
+          resolveToasts.push({ msg: `You repelled ${from.name}'s raid!`, kind: 'good' })
+        } else {
+          const lost =
+            raid.targetVillageId != null
+              ? get().npcVillages.find((v) => v.id === raid.targetVillageId)
+              : null
+          if (lost && lost.owner === 'player') {
+            // an outpost is seized back: turns neutral, fresh inhabitants move in,
+            // your buildings inside its borders are razed
+            lost.owner = 'neutral'
+            lost.influence = 0
+            const n = 3 + lost.tierIndex
+            const reborn: NpcVillager[] = []
+            for (let i = 0; i < n; i++) {
+              const a = (i / n) * Math.PI * 2
+              const rad = 1.6 + (i % 2) * 1.4
+              reborn.push({
+                id: nextNpcVid(),
+                pos: { x: lost.center.x + Math.cos(a) * rad, z: lost.center.z + Math.sin(a) * rad },
+                heading: a,
+                wanderTarget: null,
+                restTimer: 0,
+                target: null,
+                bob: i * 1.6,
+              })
+            }
+            lost.villagers = reborn
+            villagesChanged = true
+            const razed = new Set(
+              get()
+                .buildings.filter((b) => dist(b.pos, lost.center) <= lost.territoryRadius)
+                .map((b) => b.id),
+            )
+            if (razed.size) set({ buildings: get().buildings.filter((b) => !razed.has(b.id)) })
+            resolveToasts.push({ msg: `${from.name} overran and seized ${lost.name}!`, kind: 'warn' })
+          } else {
+            // a wipe that leaves almost no one DESTROYS the capital (→ refounding);
+            // a survivable loss is just a sacking
+            const remaining = get().villagers.filter((v) => !deadDefenders.has(v.id)).length
+            if (remaining <= REFOUND_TRIGGER_POP) {
+              refoundAfter = true
+            } else {
+              set((s2) => {
+                const next = { ...s2.resources }
+                for (const t of RESOURCE_TYPES) next[t] = Math.floor(next[t] * (1 - PILLAGE_FRACTION))
+                return { resources: next }
+              })
+              resolveToasts.push({ msg: `${from.name} sacked your capital — supplies plundered!`, kind: 'warn' })
+            }
+          }
+        }
+        standDownDefenders() // only one raid runs at a time
+        cd[raid.fromVillageId] = RAID_COOLDOWN
+      }
+
+      if (deadRaiders.size) {
+        for (const v of get().npcVillages) v.villagers = v.villagers.filter((nv) => !deadRaiders.has(nv.id))
+        villagesChanged = true
+      }
+      if (deadDefenders.size) set({ villagers: get().villagers.filter((v) => !deadDefenders.has(v.id)) })
+      if (villagesChanged) set({ npcVillages: [...get().npcVillages] })
+      if (finished.length) set({ raids: get().raids.filter((r) => !finished.includes(r)) })
+      for (const t of resolveToasts) get().pushToast(t.msg, t.kind)
+      if (refoundAfter) get().destroyCapital() // the capital fell — enter first-person survival
+
+      // ---- maybe a neutral neighbour launches a fresh raid (when enabled) ----
+      set((s2) => ({ raidScan: s2.raidScan + dt }))
+      if (get().raidsEnabled && get().raidScan >= RAID_CHECK_INTERVAL) {
+        set({ raidScan: 0 })
+        if (get().raids.length === 0 && !get().refounding) {
+          const cands = get().npcVillages.filter(
+            (v) =>
+              v.discovered &&
+              v.owner === 'neutral' &&
+              (cd[v.id] ?? 0) <= 0 &&
+              v.villagers.length > RAID_MIN_PARTY,
+          )
+          if (cands.length) {
+            // the biggest threat strikes (highest age, then most people)
+            cands.sort(
+              (a, b) => b.tierIndex * 10 + b.villagers.length - (a.tierIndex * 10 + a.villagers.length),
+            )
+            startRaid(cands[0])
+          }
+        }
+      }
     }
 
     // apply on ANY change — crafting buildings consume inputs (negative gains)
@@ -1232,6 +1822,13 @@ export const useGame = create<GameState>((set, get) => ({
       for (const name of discovered) get().pushToast(`Your scout discovered ${name}!`, 'good')
     }
 
+    // a settler arrived and founded a new settlement — add it as a player hub
+    if (founded.length) {
+      const newVills = founded.map((pos) => makeFoundedSettlement(pos, nextNpcVillageId++))
+      set({ npcVillages: [...get().npcVillages, ...newVills] })
+      for (const nv of newVills) get().pushToast(`${nv.name} founded — a new settlement rises!`, 'good')
+    }
+
     // wildlife: graze, and bring hunted animals back elsewhere after a while
     for (const an of get().animals) {
       if (an.alive) {
@@ -1243,18 +1840,25 @@ export const useGame = create<GameState>((set, get) => ({
           an.pos = { x: an.home.x + Math.cos(a) * 3, z: an.home.z + Math.sin(a) * 3 }
           an.wanderTarget = null
           an.alive = true
+          an.hits = 0
         }
       }
     }
 
-    // NPC village inhabitants amble in place — or rush to defend during a battle
+    // NPC village inhabitants amble in place — march out on a raid — or rush to
+    // defend their own village when YOU attack it
     for (const village of get().npcVillages) {
       const underAttack = get().battles.some((b) => b.villageId === village.id)
-      const clash = underAttack ? clashPoint(village.center) : null
+      const defendClash = underAttack ? clashPoint(village.center) : null
       for (const nv of village.villagers) {
-        if (clash) {
-          nv.heading = Math.atan2(clash.x - nv.pos.x, clash.z - nv.pos.z)
-          if (dist(nv.pos, clash) > 2) moveToward(nv.pos, clash, ANIMAL_SPEED * 2.4 * dt)
+        if (nv.target) {
+          // marching out to raid your settlement (then home once the raid ends)
+          nv.heading = Math.atan2(nv.target.x - nv.pos.x, nv.target.z - nv.pos.z)
+          const arrived = moveToward(nv.pos, nv.target, MARCH_SPEED * dt)
+          if (arrived && dist(nv.pos, village.center) < 2) nv.target = null // home — resume life
+        } else if (defendClash) {
+          nv.heading = Math.atan2(defendClash.x - nv.pos.x, defendClash.z - nv.pos.z)
+          if (dist(nv.pos, defendClash) > 2) moveToward(nv.pos, defendClash, ANIMAL_SPEED * 2.4 * dt)
         } else {
           npcWander(nv, village.center, village.territoryRadius, dt)
         }
@@ -1330,8 +1934,8 @@ export const useGame = create<GameState>((set, get) => ({
       s.pushToast(`Need ${costText(era.buildCost)}`, 'warn')
       return
     }
-    if (dist(p, TOWN_CENTER) > s.territoryRadius()) {
-      s.pushToast('Outside your borders — upgrade the townhall to expand', 'warn')
+    if (!s.inTerritory(p)) {
+      s.pushToast('Outside your realm — expand, conquer a village, or found a settlement here', 'warn')
       return
     }
     if (!s.canPlaceAt(p, RESIDENCE_HALF)) {
@@ -1376,8 +1980,8 @@ export const useGame = create<GameState>((set, get) => ({
       s.pushToast(`Need ${costText(def.cost)}`, 'warn')
       return
     }
-    if (dist(p, TOWN_CENTER) > s.territoryRadius()) {
-      s.pushToast('Outside your borders — upgrade the townhall to expand', 'warn')
+    if (!s.inTerritory(p)) {
+      s.pushToast('Outside your realm — expand, conquer a village, or found a settlement here', 'warn')
       return
     }
     if (!s.canPlaceProduction(p, kind)) {
@@ -1393,6 +1997,7 @@ export const useGame = create<GameState>((set, get) => ({
         berryfield: "Forager's Huts go on a berry field",
         rock: 'Quarries must sit on a rock outcrop',
         mithrildeposit: 'A Mine must sit on a mithril deposit',
+        orichalcumdeposit: 'An Orichalcum Mine must sit on an orichalcum deposit',
       }
       s.pushToast(onField ? 'Too close to another building' : needField[def.fieldType], 'warn')
       return
@@ -1474,11 +2079,55 @@ export const useGame = create<GameState>((set, get) => ({
     }))
   },
 
+  // tear down one of your buildings — frees the slot + ground, releases its
+  // workers to idle, and hands back half the materials (for restructuring)
+  demolishBuilding: (buildingId) => {
+    const s = get()
+    const b = s.buildings.find((x) => x.id === buildingId)
+    if (!b) return
+    if (b.kind === 'starforge') return // the fallen star can't be rebuilt — never raze it
+    const refund = demolishRefund(b)
+    const workerIds = isProduction(b) ? b.workers : []
+    // release anyone employed here back to idle
+    for (const v of s.villagers) {
+      if (v.state !== 'held' && (workerIds.includes(v.id) || v.workplaceId === buildingId)) {
+        v.workplaceId = null
+        v.forageFieldId = null
+        v.carry = 0
+        v.carryType = null
+        v.route = null
+        v.wanderTarget = null
+        v.state = 'idle'
+      }
+    }
+    const lvls = isProduction(b) ? PRODUCTION[b.kind].levels : null
+    const name = lvls
+      ? lvls[Math.min(b.level, lvls.length - 1)].name
+      : RESIDENCE_ERAS[b.level]?.name ?? 'building'
+    const cap = TOWN_TIERS[s.tierIndex].storageCap
+    set((st) => {
+      const res = { ...st.resources }
+      for (const t of RESOURCE_TYPES) res[t] = Math.min(cap, res[t] + (refund[t] ?? 0))
+      return {
+        resources: res,
+        buildings: st.buildings.filter((x) => x.id !== buildingId),
+        selection: null,
+      }
+    })
+    const reclaimed = RESOURCE_TYPES.some((t) => (refund[t] ?? 0) > 0)
+    s.pushToast(`Demolished ${name}${reclaimed ? ` · reclaimed ${costText(refund)}` : ''}`, 'info')
+  },
+
   // send the nearest idle villager to gather a field by hand (slow, no building)
   gatherField: (fieldId) => {
     const s = get()
     const f = FIELDS.find((x) => x.id === fieldId)
     if (!f) return
+    // you can pick up wood/food/stone by hand, but mithril needs the Mithril Age
+    if (f.type === 'mithrildeposit' && !resourceUnlocked('mithril', s.tierIndex)) {
+      s.pushToast('You can’t mine mithril yet — reach the Mithril Age', 'warn')
+      return
+    }
     let best: Villager | null = null
     let bestD = Infinity
     for (const v of s.villagers) {
@@ -1523,6 +2172,53 @@ export const useGame = create<GameState>((set, get) => ({
     scout.route = null
     scout.wanderTarget = null
     s.pushToast('A scout sets out to explore…', 'info')
+  },
+
+  canSettleAt: (p) => {
+    const s = get()
+    if (s.tierIndex < EXPANSION_TIER) return false
+    if (Math.hypot(p.x, p.z) > SETTLE_MAX_RANGE) return false // inside the world (the mountains)
+    if (dist(p, TOWN_CENTER) < SETTLE_MIN_DIST) return false // away from your capital
+    for (const v of s.npcVillages) if (dist(p, v.center) < SETTLE_MIN_DIST) return false // and every village
+    return true
+  },
+
+  foundSettlement: (p) => {
+    const s = get()
+    if (s.tierIndex < EXPANSION_TIER) {
+      s.pushToast('Founding settlements unlocks in the Age of Expansion', 'warn')
+      return
+    }
+    if (!s.canAfford(SETTLE_COST)) {
+      s.pushToast(`Need ${costText(SETTLE_COST)} to send settlers`, 'warn')
+      return
+    }
+    if (!s.canSettleAt(p)) {
+      s.pushToast('Settle on open ground, well away from other settlements', 'warn')
+      return
+    }
+    // the nearest idle villager to the spot becomes the settler
+    let settler: Villager | null = null
+    let bestD = Infinity
+    for (const v of s.villagers) {
+      if (v.state === 'idle' && v.workplaceId === null && v.forageFieldId === null) {
+        const d = dist(v.pos, p)
+        if (d < bestD) {
+          bestD = d
+          settler = v
+        }
+      }
+    }
+    if (!settler) {
+      s.pushToast('No idle villager free to send as a settler', 'warn')
+      return
+    }
+    set((st) => ({ resources: spend(st.resources, SETTLE_COST), buildMode: 'none' }))
+    settler.state = 'settling'
+    settler.scoutTarget = { x: p.x, z: p.z }
+    settler.route = null
+    settler.wanderTarget = null
+    s.pushToast('A settler sets out to found a new settlement…', 'info')
   },
 
   attackVillage: (villageId) => {
@@ -1577,14 +2273,284 @@ export const useGame = create<GameState>((set, get) => ({
     s.pushToast(`A missionary sets out to ${village.name}…`, 'info')
   },
 
+  // advance an owned village one era — it grows like your own town: wider borders,
+  // more housing (pop cap) + build allowance, a richer tribute, and a grander look.
+  // A vassal can't out-rank your capital, so you raise your own town first.
+  upgradeVillage: (villageId) => {
+    const s = get()
+    const v = s.npcVillages.find((x) => x.id === villageId)
+    if (!v || v.owner !== 'player') return
+    const nextTier = v.tierIndex + 1
+    if (nextTier >= TOWN_TIERS.length) {
+      s.pushToast('This town is already at the highest age', 'warn')
+      return
+    }
+    if (nextTier > s.tierIndex) {
+      s.pushToast(`Advance your own town to the ${TOWN_TIERS[nextTier].era} first`, 'warn')
+      return
+    }
+    const cost = TOWN_TIERS[nextTier].upgradeCost
+    if (!cost || !s.canAfford(cost)) {
+      s.pushToast(`Need ${costText(cost ?? {})}`, 'warn')
+      return
+    }
+    const era = RESIDENCE_ERAS[Math.min(nextTier, RESIDENCE_ERAS.length - 1)].model
+    // one new dwelling joins the ring as it grows
+    const a = Math.random() * Math.PI * 2
+    const rad = 2.8 + Math.random() * 1.6
+    const hx = v.center.x + Math.cos(a) * rad
+    const hz = v.center.z + Math.sin(a) * rad
+    const newHut = { pos: { x: hx, z: hz }, rot: Math.atan2(v.center.x - hx, v.center.z - hz), model: era }
+    set((st) => ({
+      resources: spend(st.resources, cost),
+      npcVillages: st.npcVillages.map((x) =>
+        x.id !== villageId
+          ? x
+          : {
+              ...x,
+              tierIndex: nextTier,
+              territoryRadius: TOWN_TIERS[nextTier].territoryRadius * 0.6,
+              income: villageIncome(nextTier),
+              huts: [...x.huts.map((h) => ({ ...h, model: era })), newHut],
+            },
+      ),
+    }))
+    s.pushToast(`${v.name} advanced to the ${TOWN_TIERS[nextTier].era}!`, 'good')
+  },
+
+  // ---- endgame: the fallen star ----
+  openMeteor: () => {
+    const s = get()
+    const eg = s.endgame
+    if (!eg || !eg.found || eg.open) return
+    // the whole continent must be yours
+    if (!s.npcVillages.every((v) => v.owner === 'player')) {
+      s.pushToast('The star resists — first take every village on the continent', 'warn')
+      return
+    }
+    // and every storehouse brimming (starmetal doesn't exist yet, so it's exempt)
+    const cap = TOWN_TIERS[s.tierIndex].storageCap
+    if (!RESOURCE_TYPES.every((t) => t === 'starmetal' || s.resources[t] >= cap)) {
+      s.pushToast('Fill every storehouse to the brim, then give it ALL', 'warn')
+      return
+    }
+    // pay it all; the Starforge blazes to life at the crater
+    const forge: Building = {
+      id: nextBuildingId++,
+      kind: 'starforge',
+      level: 0,
+      pos: { x: eg.meteorPos.x, z: eg.meteorPos.z },
+      rot: 0,
+      workers: [],
+    }
+    set((st) => ({
+      resources: emptyResources(),
+      buildings: [...st.buildings, forge],
+      endgame: { ...eg, open: true },
+    }))
+    s.pushToast('The meteor splits open — a Starforge blazes within! Fuse orichalcum + mithril into Starmetal.', 'good')
+  },
+
+  chooseSpecialty: (specialty) => {
+    const s = get()
+    const eg = s.endgame
+    if (!eg || !eg.open || eg.specialty) return
+    const cap = TOWN_TIERS[s.tierIndex].storageCap
+    if (s.resources.starmetal < cap) {
+      s.pushToast('Forge your Starmetal store to the brim first', 'warn')
+      return
+    }
+    set((st) => ({
+      resources: { ...st.resources, starmetal: 0 }, // all of it goes into the great work
+      endgame: { ...eg, specialty, built: true },
+    }))
+    s.pushToast(
+      specialty === 'magic'
+        ? 'The Starmetal tears a shimmering portal into the multiverse!'
+        : 'The Starmetal forms a gleaming starship, ready for the void!',
+      'good',
+    )
+  },
+
+  sendPeople: () => {
+    const s = get()
+    const eg = s.endgame
+    if (!eg || !eg.built || eg.won) return
+    // the people pass through / aboard — the realm ascends. Victory.
+    set({ endgame: { ...eg, won: true }, villagers: [], selection: null })
+  },
+
+  // ---- last survivor / refounding ----
+  destroyCapital: () => {
+    const s = get()
+    if (s.refounding) return
+    // one villager crawls from the ashes — prefer a living, un-held one
+    const survivor = s.villagers.find((v) => v.state !== 'held') ?? s.villagers[0] ?? makeVillager(0)
+    survivor.state = 'idle'
+    survivor.workplaceId = null
+    survivor.forageFieldId = null
+    survivor.carry = 0
+    survivor.carryType = null
+    survivor.route = null
+    survivor.wanderTarget = null
+    survivor.scoutTarget = null
+    survivor.scoutReturning = false
+    survivor.huntAnimalId = null
+    survivor.targetVillageId = null
+    survivor.defendTarget = null
+    survivor.pos = { x: 2, z: 2 } // amid the ruins of the town centre
+    survivor.heading = 0
+    set({
+      villagers: [survivor],
+      buildings: [], // the town is razed
+      paths: [],
+      tierIndex: 0, // back to the dawn — rebuild from nothing
+      resources: { wood: 0, food: 8, stone: 0, mithril: 0, orichalcum: 0, starmetal: 0, weapons: 0 },
+      selection: null,
+      buildMode: 'none',
+      heldId: null,
+      battles: [],
+      raids: [],
+      choppedTrees: [], // the forest stands whole again for the survivor to fell
+      treeHits: {},
+      refounding: { woodGoal: REFOUND_WOOD_GOAL, foodGoal: REFOUND_FOOD_GOAL, survivorId: survivor.id },
+    })
+    s.pushToast('Your capital has fallen! One survivor remains — found a new city.', 'warn')
+  },
+
+  // first-person harvest: a left-click swings at whatever's in front of the
+  // survivor — a deer (hunt), a forest (chop wood) or a berry patch (pick food)
+  survivorChop: () => {
+    const s = get()
+    const rf = s.refounding
+    if (!rf) return
+    const v = s.villagers.find((x) => x.id === rf.survivorId)
+    if (!v) return
+    const fx = Math.sin(v.heading)
+    const fz = Math.cos(v.heading)
+    // dot of the (normalised) direction to a point with the survivor's facing
+    const facing = (p: Vec2) => {
+      const dx = p.x - v.pos.x
+      const dz = p.z - v.pos.z
+      const d = Math.hypot(dx, dz) || 1
+      return (dx / d) * fx + (dz / d) * fz
+    }
+
+    // prefer a deer you're looking at and within reach of (the hunt)
+    let prey: Animal | null = null
+    let preyD = CHOP_REACH
+    for (const an of s.animals) {
+      if (!an.alive) continue
+      const d = dist(v.pos, an.pos)
+      if (d <= preyD && facing(an.pos) > 0.2) {
+        preyD = d
+        prey = an
+      }
+    }
+    const cap = TOWN_TIERS[s.tierIndex].storageCap
+    const give = (type: ResourceType, n: number) =>
+      set((st) => ({ resources: { ...st.resources, [type]: Math.min(cap, st.resources[type] + n) } }))
+
+    if (prey) {
+      prey.hits += 1 // a swing lands on the deer; it drops once worn down
+      if (prey.hits >= DEER_HP) {
+        prey.alive = false
+        prey.hits = 0
+        prey.respawnTimer = ANIMAL_RESPAWN
+        give('food', HUNT_FOOD)
+      }
+      return
+    }
+
+    // next: the nearest standing tree you're facing & within reach — chop it
+    // down over several swings, then it's felled for wood
+    const chopped = new Set(s.choppedTrees)
+    let tree: { id: string; pos: Vec2 } | null = null
+    let treeD = CHOP_REACH + 0.4
+    for (const t of CHOP_TREES) {
+      if (chopped.has(t.id)) continue
+      const d = dist(v.pos, t.pos)
+      if (d <= treeD && facing(t.pos) > 0) {
+        treeD = d
+        tree = t
+      }
+    }
+    if (tree) {
+      const h = (s.treeHits[tree.id] ?? 0) + 1
+      if (h >= TREE_HP) {
+        delete s.treeHits[tree.id]
+        set({ choppedTrees: [...s.choppedTrees, tree.id] }) // it falls — render hides it
+        give('wood', TREE_WOOD)
+      } else {
+        s.treeHits[tree.id] = h
+      }
+      return
+    }
+
+    // else a berry patch you've reached — pick a handful of food
+    let field: ResourceField | null = null
+    let bestEdge = CHOP_REACH
+    for (const f of FIELDS) {
+      if (f.type !== 'berryfield') continue
+      const edge = dist(v.pos, f.pos) - f.radius
+      if (edge <= bestEdge && facing(f.pos) > -0.1) {
+        bestEdge = edge
+        field = f
+      }
+    }
+    if (field) give('food', PICK_FOOD)
+  },
+
+  foundNewCity: () => {
+    const s = get()
+    const rf = s.refounding
+    if (!rf) return
+    if (s.resources.wood < rf.woodGoal || s.resources.food < rf.foodGoal) {
+      s.pushToast(`Need ${rf.woodGoal} wood and ${rf.foodGoal} food to found your city`, 'warn')
+      return
+    }
+    // the capital rises wherever the survivor is standing now
+    const survivor = s.villagers.find((v) => v.id === rf.survivorId)
+    if (survivor) {
+      TOWN_CENTER.x = survivor.pos.x
+      TOWN_CENTER.z = survivor.pos.z
+    }
+    // settle the founder + two fellow settlers in the ring around the new campfire
+    if (survivor) {
+      survivor.pos = spawnSpot(0)
+      survivor.heading = 0
+      survivor.state = 'idle'
+      survivor.wanderTarget = null
+    }
+    const settlers = [makeVillager(1), makeVillager(2)]
+    set((st) => ({
+      resources: {
+        ...st.resources,
+        wood: st.resources.wood - rf.woodGoal,
+        food: st.resources.food - rf.foodGoal,
+      },
+      villagers: [...st.villagers, ...settlers],
+      tierIndex: 0,
+      choppedTrees: [], // the felled forest regrows as the new city takes root
+      treeHits: {},
+      refounding: null,
+    }))
+    s.pushToast('A new city rises from the ashes — long may it stand!', 'good')
+  },
+
   // ---- selection (for the management panel) ----
   selectBuilding: (id) => set({ selection: { kind: 'building', id } }),
   selectTownhall: () => set({ selection: { kind: 'townhall' } }),
   selectNpc: (id) => set({ selection: { kind: 'npc', id } }),
+  selectMeteor: () => set({ selection: { kind: 'meteor' } }),
   clearSelection: () => set({ selection: null }),
+  focusCamera: (p) => set({ cameraFocus: p ? { x: p.x, z: p.z } : null }),
 
   addPathPoint: (p) => {
-    const snap = snapPathPoint(p, get().buildings)
+    const hubs = get()
+      .npcVillages.filter((v) => v.owner === 'player')
+      .map((v) => v.center)
+    const snap = snapPathPoint(p, get().buildings, hubs)
     const point = snap.point
     const draft = get().pathDraft
     if (draft.length === 0) {
@@ -1602,8 +2568,23 @@ export const useGame = create<GameState>((set, get) => ({
 
   endPath: () => set({ pathDraft: [] }),
 
+  erasePath: (p) => {
+    const paths = get().paths
+    let best: PathSegment | null = null
+    let bestD = ERASE_RANGE
+    for (const s of paths) {
+      const d = pointSegDist(p, s.a, s.b)
+      if (d < bestD) {
+        bestD = d
+        best = s
+      }
+    }
+    if (best) set({ paths: paths.filter((s) => s.id !== best!.id) })
+  },
+
   // ---- hand of god ----
   pickUpVillager: (villagerId) => {
+    if (get().refounding) return // no hand-of-god while you ARE a villager
     const v = get().villagers.find((x) => x.id === villagerId)
     if (!v) return
     const wid = v.workplaceId
@@ -1616,6 +2597,7 @@ export const useGame = create<GameState>((set, get) => ({
     v.scoutReturning = false
     v.huntAnimalId = null
     v.targetVillageId = null
+    v.defendTarget = null
     v.state = 'held'
     set((st) => ({
       heldId: villagerId,
@@ -1650,8 +2632,15 @@ export const useGame = create<GameState>((set, get) => ({
       const lvl = prodLevel(b)
       return lvl != null && b.workers.length < lvl.slots && dist(v.pos, b.pos) < buildingHalf(b) + 1.1
     })
-    // dropped onto a forest / berry field? -> gather it by hand (slow)
-    const field = target ? null : FIELDS.find((f) => dist(v.pos, f.pos) <= f.radius + 0.6)
+    // dropped onto a field? -> gather it by hand (slow). mithril is off-limits
+    // until the Mithril Age, so a drop there just relocates the villager instead.
+    const field = target
+      ? null
+      : FIELDS.find(
+          (f) =>
+            dist(v.pos, f.pos) <= f.radius + 0.6 &&
+            !(f.type === 'mithrildeposit' && !resourceUnlocked('mithril', get().tierIndex)),
+        )
     if (target) {
       v.state = 'toWork'
       v.workplaceId = target.id
@@ -1685,12 +2674,18 @@ export const useGame = create<GameState>((set, get) => ({
       ...freshState(),
       animals: makeAnimals(),
       battles: [],
+      raids: [],
+      raidScan: 0,
+      raidCooldowns: {},
+      choppedTrees: [],
+      treeHits: {},
       buildMode: 'none',
       pathDraft: [],
       cursorGround: { x: 0, z: 0 },
       heldId: null,
       hover: null,
       selection: null,
+      cameraFocus: null,
       toasts: [],
     })
   },
@@ -1763,10 +2758,21 @@ export const useGame = create<GameState>((set, get) => ({
       })
     }
 
-    // fill population to the cap, staff the workplaces, leave a couple idle
+    // a representative town has just enough people to staff every workplace plus
+    // a small idle reserve — NOT the full housing cap (which would pile up idlers)
+    let totalSlots = 0
+    for (const b of buildings) {
+      if (!isProduction(b)) continue
+      const levels = PRODUCTION[b.kind].levels
+      totalSlots += levels[Math.min(b.level, levels.length - 1)].slots
+    }
+    // idle reserve scales with the era: lean early, a standing army's worth in
+    // the combat ages (Age of Expansion on) so you can muster war parties
+    const idleReserve = 3 + Math.max(0, t - 2) * 4
     const popCap = TOWN_TIERS[t].popCap + residencePop(buildings)
+    const villagerCount = Math.min(popCap, totalSlots + idleReserve)
     const villagers: Villager[] = []
-    for (let i = 0; i < popCap; i++) villagers.push(makeVillager(i))
+    for (let i = 0; i < villagerCount; i++) villagers.push(makeVillager(i))
     let vi = 0
     for (const b of buildings) {
       if (!isProduction(b)) continue
@@ -1788,6 +2794,8 @@ export const useGame = create<GameState>((set, get) => ({
         food: Math.floor(cap * 0.5),
         stone: t >= 2 ? Math.floor(cap * 0.4) : 0,
         mithril: t >= 2 ? Math.floor(cap * 0.3) : 0,
+        orichalcum: t >= 3 ? Math.floor(cap * 0.2) : 0,
+        starmetal: 0,
         weapons: t >= 3 ? Math.floor(cap * 0.15) : 0,
       },
       villagers,
@@ -1806,11 +2814,78 @@ export const useGame = create<GameState>((set, get) => ({
 
   debugDiscoverAll: () =>
     set((s) => ({ npcVillages: s.npcVillages.map((v) => ({ ...v, discovered: true })) })),
+
+  debugRaid: (villageId) => {
+    const from = get().npcVillages.find((v) => v.id === villageId)
+    if (!from || from.owner !== 'neutral' || from.villagers.length < 2) {
+      get().pushToast('That village can’t raid right now', 'warn')
+      return
+    }
+    startRaid(from)
+  },
+
+  toggleRaids: () => {
+    const on = !get().raidsEnabled
+    set({ raidsEnabled: on, raidScan: 0 })
+    get().pushToast(on ? 'Random raids enabled' : 'Random raids disabled', 'info')
+  },
+
+  setGameSpeed: (n) => set({ gameSpeed: n }),
+
+  debugEndgame: () => {
+    const cap = TOWN_TIERS[MEDIEVAL_TIER].storageCap
+    const res = emptyResources()
+    for (const t of RESOURCE_TYPES) res[t] = t === 'starmetal' ? 0 : cap
+    const meteorPos = { x: Math.cos(METEOR_ANGLE) * METEOR_DIST, z: Math.sin(METEOR_ANGLE) * METEOR_DIST }
+    set((st) => ({
+      tierIndex: Math.max(st.tierIndex, MEDIEVAL_TIER),
+      resources: res,
+      npcVillages: st.npcVillages.map((v) => ({ ...v, owner: 'player' as const, discovered: true })),
+      endgame: {
+        meteorPos,
+        found: true,
+        open: st.endgame?.open ?? false,
+        specialty: st.endgame?.specialty ?? null,
+        built: st.endgame?.built ?? false,
+        won: st.endgame?.won ?? false,
+      },
+    }))
+    get().pushToast('Debug: continent owned + storages maxed + meteor found — open it!', 'info')
+  },
+
+  debugStarforgeFull: () => {
+    // make sure the meteor is cracked open (Starforge exists), then brim Starmetal
+    if (!get().endgame?.open) {
+      get().debugEndgame() // found + own all + max storages
+      get().openMeteor() // drains storages, spawns the Starforge, open=true
+    }
+    const cap = TOWN_TIERS[get().tierIndex].storageCap
+    set((s) => ({ resources: { ...s.resources, starmetal: cap } }))
+    get().pushToast('Debug: Starmetal store filled — choose magic or technology', 'info')
+  },
+
+  // destroy the capital, then auto-gather + found a new city to test the cycle
+  debugRefound: () => {
+    if (!get().refounding) get().destroyCapital()
+    const rf = get().refounding
+    if (!rf) return
+    set((st) => ({ resources: { ...st.resources, wood: rf.woodGoal, food: rf.foodGoal } }))
+    get().foundNewCity()
+  },
 }))
 
 // dev-only handle for debugging / driving the sim from the console
 if (import.meta.env.DEV && typeof window !== 'undefined') {
-  const w = window as unknown as { __game: typeof useGame; __roadConnected: typeof roadConnected }
+  const w = window as unknown as {
+    __game: typeof useGame
+    __roadConnected: typeof roadConnected
+    __chopTrees: typeof CHOP_TREES
+    __townCenter: typeof TOWN_CENTER
+    __fields: typeof FIELDS
+  }
   w.__game = useGame
   w.__roadConnected = roadConnected
+  w.__chopTrees = CHOP_TREES
+  w.__townCenter = TOWN_CENTER
+  w.__fields = FIELDS
 }

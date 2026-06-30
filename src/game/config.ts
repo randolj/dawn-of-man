@@ -58,21 +58,21 @@ export const RESIDENCE_ERAS: ResidenceEra[] = [
   {
     name: 'Hut',
     model: 'hut',
-    popBonus: 4,
+    popBonus: 3,
     buildCost: { wood: 50, food: 10 },
     upgradeCost: { wood: 45, food: 15 },
   },
   {
     name: 'House',
     model: 'house',
-    popBonus: 6,
+    popBonus: 5,
     buildCost: { wood: 80, food: 25 },
     upgradeCost: { wood: 75, food: 30 },
   },
   {
     name: 'Cottage',
     model: 'cottage',
-    popBonus: 8,
+    popBonus: 6,
     buildCost: { wood: 120, food: 45 },
     upgradeCost: { wood: 120, food: 55 },
   },
@@ -127,7 +127,21 @@ export const PRODUCTION: Record<ProductionKind, ProductionDef> = {
       { name: 'Great Mine', slots: 3, load: 6, workTime: 3.0, reqTier: 4, upgradeCost: { wood: 220, stone: 90 } },
     ],
   },
-  // --- Iron Age: the Smithy forges mithril into weapons (reactivates `consumes`).
+  // --- Age of Expansion: orichalcum, a metal finer than mithril, mined only
+  // from the rare deposits in far/contested land — you reach them by taking a
+  // village. Leaner + slower per load than mithril; it's meant to feel earned.
+  orichalcummine: {
+    kind: 'orichalcummine',
+    produces: 'orichalcum',
+    fieldType: 'orichalcumdeposit',
+    cost: { wood: 60, stone: 30 },
+    half: 1.0,
+    levels: [
+      { name: 'Orichalcum Mine', slots: 1, load: 2, workTime: 4.2, reqTier: 3, upgradeCost: null },
+      { name: 'Deep Orichalcum Mine', slots: 2, load: 3, workTime: 3.8, reqTier: 4, upgradeCost: { wood: 160, stone: 70 } },
+    ],
+  },
+  // --- Age of Expansion: the Smithy forges mithril into weapons (reactivates `consumes`).
   // Weapons arm soldiers for a war party. (Blacksmith + Soldier = the new jobs.)
   smithy: {
     kind: 'smithy',
@@ -139,6 +153,19 @@ export const PRODUCTION: Record<ProductionKind, ProductionDef> = {
     levels: [
       { name: 'Smithy', slots: 1, load: 1, workTime: 3.0, reqTier: 3, upgradeCost: null },
       { name: 'Armory', slots: 2, load: 1, workTime: 2.6, reqTier: 4, upgradeCost: { wood: 150, stone: 70 } },
+    ],
+  },
+  // --- Endgame: the opened meteor is a Starforge — it fuses orichalcum + mithril
+  // into Starmetal (reactivates the dormant multi-input `consumes` machinery).
+  starforge: {
+    kind: 'starforge',
+    produces: 'starmetal',
+    fieldType: null,
+    consumes: { orichalcum: 1, mithril: 1 },
+    cost: {}, // never player-placed — created when the meteor is opened
+    half: 1.4,
+    levels: [
+      { name: 'Starforge', slots: 3, load: 1, workTime: 3.2, reqTier: 4, upgradeCost: null },
     ],
   },
   // Meat: a Hunter's Lodge sits on open ground (no field) and its workers range
@@ -182,19 +209,44 @@ export const HELD_HEIGHT = 1.9 // how high a villager floats while picked up
 
 // keep placements from landing on top of the town center
 export const TOWN_CLEAR_RADIUS = 3.2
+// keep placements clear of a captured village's core (its hub + ring of huts)
+export const VILLAGE_CLEAR_RADIUS = 5.5
 
 export const RESOURCE_COLORS: Record<string, string> = {
   wood: '#c9863f',
   food: '#7bc96f',
   stone: '#9aa3ad',
   mithril: '#bfe3ec',
+  orichalcum: '#e8b13c',
+  starmetal: '#c4b6ff',
   weapons: '#d05a4a',
 }
 
 // the Mithril Age (Longhouse) unlocks mithril + the mine
 export const MITHRIL_TIER = 2
-// the Iron Age (Town Hall) unlocks weapons + the smithy + attacking villages
-export const IRON_TIER = 3
+// the Age of Expansion (Town Hall) unlocks weapons + the smithy + attacking
+// villages, AND orichalcum — the better metal, found only in far/contested land
+export const EXPANSION_TIER = 3
+// the Medieval era (Keep) — the final tier; a meteor falls and the endgame begins
+export const MEDIEVAL_TIER = 4
+
+// ---- endgame: the fallen star ----------------------------------------------
+// At Medieval a meteor crashes far from every settlement. A scout reveals it;
+// opening it demands the whole continent (own all villages) + every storage maxed,
+// which it then drains. Opened, it's a Starforge: orichalcum + mithril → Starmetal.
+// Max your starmetal, pick magic (a portal) or tech (a starship), and send your
+// people through to win.
+export const METEOR_ANGLE = 4.5 // where it lands (polar, around the world origin)
+export const METEOR_DIST = 88
+export const METEOR_FOUND_RADIUS = 20 // how near a scout must pass to reveal it
+
+// ---- founding new settlements (a settler walks out to empty land) -----------
+// Unlocks at the Age of Expansion (= EXPANSION_TIER). Lets you claim NEW ground
+// far from any village — the only way to reach the most remote orichalcum.
+export const SETTLE_COST: Cost = { wood: 80, food: 50 }
+export const SETTLE_MIN_DIST = 28 // a new settlement must be this far from every existing one
+export const SETTLE_MAX_RANGE = 105 // and within this of the world origin (inside the mountains)
+export const SETTLER_SPEED = 3.4 // a settler marches out at this speed
 
 // ---- village interactions (conquer / convert) -------------------------------
 export const MARCH_SPEED = 3.4 // a soldier / missionary marches at this speed
@@ -204,6 +256,37 @@ export const CONVERT_RATE = 5 // influence/sec a missionary builds toward conver
 export const MAX_PARTY = 10 // max soldiers in one war party
 export const BATTLE_DURATION = 5 // seconds a melee plays out before it resolves
 export const OWNED_COLOR = '#e0b84a' // banner/tint of villages that have joined you
+
+// ---- raids (neutral villages attacking YOU) ---------------------------------
+// A discovered, still-neutral village periodically marches on your nearest
+// settlement. You rally a defence; if its party out-muscles your defenders you
+// lose the fight — an outpost is seized back, your capital is sacked for supplies.
+export const RAID_CHECK_INTERVAL = 14 // seconds between "should anyone raid?" checks
+export const RAID_COOLDOWN = 80 // a village waits this long between its raids
+export const RAID_MIN_PARTY = 3 // a raid musters at least this many (leaving 1 home)
+export const RAID_HOME_ADVANTAGE = 1.2 // defenders fight a little above their weight at home
+export const DEFEND_RALLY = 34 // idle villagers within this of the target rally to defend
+export const PILLAGE_FRACTION = 0.3 // share of each resource lost when your capital is sacked
+
+// ---- last survivor: refounding after the capital is destroyed ----------------
+// A catastrophic capital defeat (you'd be left with ≤ this many villagers) razes
+// the town: you drop into first person as the lone survivor and must gather the
+// wood + food to rebuild a townhall and train two settlers before play resumes.
+export const REFOUND_TRIGGER_POP = 1 // capital falls if a loss leaves you with ≤ this many
+export const REFOUND_WOOD_GOAL = 60 // wood needed to refound
+export const REFOUND_FOOD_GOAL = 50 // food needed to refound
+export const SURVIVOR_SPEED = 5.2 // first-person walk speed (units/sec)
+export const SURVIVOR_EYE = 1.6 // camera eye height in first person
+// first-person look + harvesting (left-click to chop trees / pick berries / hunt deer)
+export const MOUSE_SENS = 0.0022 // radians of look per pixel of mouse movement
+export const PITCH_CLAMP = 1.35 // how far up/down you can look (radians)
+export const CHOP_REACH = 2.6 // how close to a field's edge / a deer you must be to harvest
+export const PICK_FOOD = 3 // food gained per berry pick
+export const HUNT_FOOD = 10 // food gained from felling a deer
+export const DEER_HP = 3 // axe swings to bring down a deer
+export const TREE_HP = 4 // axe swings to fell a tree
+export const TREE_WOOD = 8 // wood gained from a felled tree
+export const CHOP_COOLDOWN = 0.3 // seconds between harvest swings
 
 // ---- town-center progression ------------------------------------------------
 // Adding a new era is literally appending an entry here. Each tier raises the
@@ -233,7 +316,7 @@ export const TOWN_TIERS: TownTier[] = [
   {
     name: 'Longhouse',
     era: 'Mithril Age',
-    popCap: 8,
+    popCap: 6,
     storageCap: 300,
     buildCap: 10,
     territoryRadius: 32,
@@ -243,8 +326,8 @@ export const TOWN_TIERS: TownTier[] = [
   },
   {
     name: 'Town Hall',
-    era: 'Iron Age',
-    popCap: 12,
+    era: 'Age of Expansion',
+    popCap: 11,
     storageCap: 500,
     buildCap: 14,
     territoryRadius: 42,
@@ -255,7 +338,7 @@ export const TOWN_TIERS: TownTier[] = [
   {
     name: 'Keep',
     era: 'Medieval',
-    popCap: 18,
+    popCap: 16,
     storageCap: 800,
     buildCap: 18,
     territoryRadius: 54,

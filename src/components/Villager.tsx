@@ -23,10 +23,15 @@ export function Villager({ villagerId }: { villagerId: number }) {
     if (!v || !root.current) return
 
     const t = state.clock.elapsedTime
+    // hide your own body while you ARE this villager (first-person refounding)
+    const isSurvivor = g.refounding != null && g.refounding.survivorId === v.id
+    root.current.visible = !isSurvivor
+    if (isSurvivor) return
     const held = v.state === 'held'
     const working = v.state === 'working'
-    const soldier = v.state === 'marching' || v.state === 'fighting'
-    const fighting = v.state === 'fighting'
+    // soldiers (war parties) AND defenders (repelling a raid) carry a spear
+    const soldier = v.state === 'marching' || v.state === 'fighting' || v.state === 'defending'
+    const fighting = v.state === 'fighting' || v.state === 'defending'
     // bob whenever actually moving (covers walking, hauling AND idle wandering)
     const moved = Math.hypot(v.pos.x - lastPos.current.x, v.pos.z - lastPos.current.z) > 0.003
     lastPos.current.x = v.pos.x
@@ -78,7 +83,8 @@ export function Villager({ villagerId }: { villagerId: number }) {
   // pick up = take them off the job. Dropping on a building re-employs them;
   // dropping on open ground just relocates them (handled in the store).
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
-    if (useGame.getState().buildMode !== 'none') return
+    const g = useGame.getState()
+    if (g.buildMode !== 'none' || g.refounding) return // no hand-of-god while refounding
     e.stopPropagation()
     // disable the camera the instant we grab, regardless of hover state —
     // villagers move, so onPointerOver may have re-enabled it just before this.

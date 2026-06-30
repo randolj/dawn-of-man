@@ -3,10 +3,10 @@ import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { MeshBasicMaterial } from 'three'
 import {
   isProduction,
+  nearestHub,
   prodLevel,
   productionUpgradeAvailable,
   roadConnected,
-  TOWN_CENTER,
   useGame,
 } from '../game/store'
 import { RESIDENCE_ERAS } from '../game/config'
@@ -94,22 +94,22 @@ function ProductionView({ b, selected, canUpgrade }: { b: Building; selected: bo
   )
 }
 
-// faint dashed line from an un-roaded workplace toward the townhall
-function NoRoadHint({ from }: { from: Vec2 }) {
+// faint dashed line from an un-roaded workplace toward its nearest hub
+function NoRoadHint({ from, to }: { from: Vec2; to: Vec2 }) {
   const mat = useMemo(
     () => new MeshBasicMaterial({ color: '#e6b566', transparent: true, depthWrite: false }),
     [],
   )
   useEffect(() => () => mat.dispose(), [mat])
   const dashes = useMemo(() => {
-    const dx = TOWN_CENTER.x - from.x
-    const dz = TOWN_CENTER.z - from.z
+    const dx = to.x - from.x
+    const dz = to.z - from.z
     const len = Math.hypot(dx, dz)
     const step = 0.95
     const out: number[] = []
     for (let d = 1.6; d < len - 1.6; d += step) out.push(d)
     return { angle: Math.atan2(dz, dx), positions: out }
-  }, [from.x, from.z])
+  }, [from.x, from.z, to.x, to.z])
 
   useFrame((s) => {
     mat.opacity = 0.22 + (Math.sin(s.clock.elapsedTime * 2) + 1) * 0.11
@@ -130,30 +130,34 @@ export function Buildings() {
   const buildings = useGame((s) => s.buildings)
   const paths = useGame((s) => s.paths)
   const tierIndex = useGame((s) => s.tierIndex)
+  const npcVillages = useGame((s) => s.npcVillages)
   const selection = useGame((s) => s.selection)
   const selId = selection?.kind === 'building' ? selection.id : -1
 
   return (
     <group>
-      {buildings.map((b) =>
-        isProduction(b) ? (
+      {buildings.map((b) => {
+        if (!isProduction(b))
+          return (
+            <ResidenceView
+              key={b.id}
+              b={b}
+              outdated={b.level < tierIndex}
+              selected={b.id === selId}
+            />
+          )
+        const hub = nearestHub(b.pos, npcVillages)
+        return (
           <Fragment key={b.id}>
             <ProductionView
               b={b}
               selected={b.id === selId}
               canUpgrade={productionUpgradeAvailable(b, tierIndex)}
             />
-            {!roadConnected(b.pos, paths) && <NoRoadHint from={b.pos} />}
+            {!roadConnected(b.pos, paths, hub) && <NoRoadHint from={b.pos} to={hub} />}
           </Fragment>
-        ) : (
-          <ResidenceView
-            key={b.id}
-            b={b}
-            outdated={b.level < tierIndex}
-            selected={b.id === selId}
-          />
-        ),
-      )}
+        )
+      })}
     </group>
   )
 }
