@@ -12,6 +12,7 @@ export function Villager({ villagerId }: { villagerId: number }) {
   const lean = useRef<Group>(null)
   const carryMesh = useRef<Mesh>(null)
   const axe = useRef<Group>(null)
+  const spear = useRef<Group>(null)
   const shadow = useRef<Mesh>(null)
   const lastPos = useRef({ x: 0, z: 0 })
   const controls = useThree((s) => s.controls) as Controls
@@ -24,6 +25,8 @@ export function Villager({ villagerId }: { villagerId: number }) {
     const t = state.clock.elapsedTime
     const held = v.state === 'held'
     const working = v.state === 'working'
+    const soldier = v.state === 'marching' || v.state === 'fighting'
+    const fighting = v.state === 'fighting'
     // bob whenever actually moving (covers walking, hauling AND idle wandering)
     const moved = Math.hypot(v.pos.x - lastPos.current.x, v.pos.z - lastPos.current.z) > 0.003
     lastPos.current.x = v.pos.x
@@ -37,12 +40,18 @@ export function Villager({ villagerId }: { villagerId: number }) {
     root.current.rotation.z = held ? Math.sin(t * 3 + v.bob) * 0.12 : 0
 
     if (lean.current) {
-      if (working) {
-        const swing = (Math.sin(t * 12 + v.bob) + 1) * 0.5
-        lean.current.rotation.x = 0.12 + swing * 0.5
+      if (working || fighting) {
+        const swing = (Math.sin(t * (fighting ? 14 : 12) + v.bob) + 1) * 0.5
+        lean.current.rotation.x = 0.12 + swing * (fighting ? 0.32 : 0.5)
       } else {
         lean.current.rotation.x += (0 - lean.current.rotation.x) * 0.25
       }
+    }
+
+    // a spear in hand while marching to or fighting at a village; jabs in melee
+    if (spear.current) {
+      spear.current.visible = soldier
+      spear.current.rotation.x = fighting ? Math.sin(t * 13 + v.bob) * 0.3 : 0
     }
 
     // axe when producing wood — at a lumberyard or chopping a forest by hand
@@ -117,6 +126,17 @@ export function Villager({ villagerId }: { villagerId: number }) {
           <boxGeometry args={[0.22, 0.22, 0.22]} />
           <meshStandardMaterial color="#ffffff" />
         </mesh>
+        {/* spear — shown while a soldier marches / fights */}
+        <group ref={spear} position={[0.24, 0.5, 0.18]} visible={false}>
+          <mesh position={[0, 0.12, 0.3]} rotation={[1.1, 0, 0]} castShadow>
+            <cylinderGeometry args={[0.025, 0.025, 0.95, 6]} />
+            <meshStandardMaterial color="#6b4a2b" />
+          </mesh>
+          <mesh position={[0, 0.33, 0.72]} rotation={[1.1, 0, 0]} castShadow>
+            <coneGeometry args={[0.06, 0.24, 6]} />
+            <meshStandardMaterial color="#cfd6dd" metalness={0.4} roughness={0.5} />
+          </mesh>
+        </group>
       </group>
 
       <mesh ref={shadow} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>

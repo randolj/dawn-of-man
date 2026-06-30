@@ -47,19 +47,26 @@ function build(): FieldData[] {
   const data: FieldData[] = []
   let id = 1
 
-  // two forests and two berry fields, ringed around the starting area
+  // Forests & berry fields ring the starting area. Rock outcrops sit further
+  // out — beyond your initial borders — so quarrying stone is a reward for
+  // upgrading the townhall and growing your territory.
   const specs: { type: ResourceField['type']; angle: number; dist: number; radius: number }[] = [
     { type: 'forest', angle: 0.5, dist: 12, radius: 3.6 },
     { type: 'forest', angle: 3.5, dist: 13, radius: 3.6 },
     { type: 'berryfield', angle: 2.0, dist: 11, radius: 2.8 },
     { type: 'berryfield', angle: 4.9, dist: 12, radius: 2.8 },
+    { type: 'rock', angle: 1.25, dist: 23.5, radius: 2.6 },
+    { type: 'rock', angle: 5.5, dist: 24.5, radius: 2.6 },
+    // mithril ore deposits — further out, reachable once your borders grow into the Mithril Age
+    { type: 'mithrildeposit', angle: 0.9, dist: 30, radius: 2.7 },
+    { type: 'mithrildeposit', angle: 4.2, dist: 32, radius: 2.7 },
   ]
 
   for (const s of specs) {
     const x = Math.cos(s.angle) * s.dist
     const z = Math.sin(s.angle) * s.dist
     const field: ResourceField = { id: id++, type: s.type, pos: { x, z }, radius: s.radius }
-    const count = s.type === 'forest' ? 15 : 12
+    const count = s.type === 'forest' ? 15 : s.type === 'berryfield' ? 12 : 7
     data.push({ field, clumps: scatter(r, x, z, s.radius, count) })
   }
   return data

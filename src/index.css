@@ -5,6 +5,9 @@
   --ui-muted: #b3aa9a;
   --wood: #c9863f;
   --food: #7bc96f;
+  --stone: #aab2bb;
+  --mithril: #bfe3ec;
+  --weapons: #d05a4a;
   --accent: #ffb454;
   font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
 }
@@ -289,6 +292,29 @@ canvas {
   gap: 10px;
 }
 
+.bp-influence {
+  margin-bottom: 10px;
+}
+
+.bp-influence-label {
+  font-size: 11px;
+  color: var(--ui-muted);
+  margin-bottom: 3px;
+}
+
+.bp-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.bp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c9a24a, #ffe08a);
+  transition: width 0.3s ease;
+}
+
 .bp-btn {
   flex: 1;
   min-width: 0;
@@ -328,12 +354,25 @@ canvas {
 }
 
 .build-bar-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   font-size: 11px;
   font-weight: 700;
   color: var(--ui-muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   margin-bottom: 4px;
+}
+
+.build-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text);
+  letter-spacing: 0;
+}
+
+.build-count.full {
+  color: #e8a23a;
 }
 
 .tool {
@@ -647,4 +686,84 @@ canvas {
 
 .field-tip-sub b {
   color: var(--ui-text);
+}
+
+/* floating name over a neutral NPC village */
+.npc-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ui-text);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+  user-select: none;
+  pointer-events: none;
+}
+
+.npc-label span {
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #e2b3ab;
+}
+
+/* hidden debug menu (Konami code) */
+.debug-menu {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.debug-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.debug-sub {
+  font-size: 11.5px;
+  color: var(--ui-muted);
+  margin-top: -4px;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.debug-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 8px;
+}
+
+.debug-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+}
+
+.debug-btn span {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ui-muted);
 }

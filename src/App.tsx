@@ -8,6 +8,8 @@ import { Objectives } from './ui/Objectives'
 import { Toasts } from './ui/Toasts'
 import { Welcome } from './ui/Welcome'
 import { HoverTooltip } from './ui/HoverTooltip'
+import { Persistence } from './ui/Persistence'
+import { DebugMenu } from './ui/DebugMenu'
 
 export default function App() {
   return (
@@ -30,7 +32,9 @@ export default function App() {
         <Toasts />
         <Welcome />
         <HoverTooltip />
+        <DebugMenu />
       </div>
+      <Persistence />
     </>
   )
 }

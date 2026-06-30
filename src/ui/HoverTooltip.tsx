@@ -1,19 +1,25 @@
-import { prodLevel, useGame } from '../game/store'
+import { prodLevel, resourceUnlocked, stoneUnlocked, useGame } from '../game/store'
 import { FIELDS } from '../game/fields'
 import { PRODUCTION, FIELD_BUILD_RANGE } from '../game/config'
 
 export function HoverTooltip() {
   const hover = useGame((s) => s.hover)
   const buildings = useGame((s) => s.buildings)
+  const tierIndex = useGame((s) => s.tierIndex)
   if (!hover) return null
   const field = FIELDS.find((f) => f.id === hover.fieldId)
   if (!field) return null
+  // resource deposits read as plain scenery until their resource is unlocked
+  if (field.type === 'rock' && !stoneUnlocked(tierIndex)) return null
+  if (field.type === 'mithrildeposit' && !resourceUnlocked('mithril', tierIndex)) return null
 
-  const isForest = field.type === 'forest'
-  const def = isForest ? PRODUCTION.lumberyard : PRODUCTION.forager
-  const icon = isForest ? '🌲' : '🫐'
-  const title = isForest ? 'Forest' : 'Berry field'
-  const res = isForest ? 'wood' : 'food'
+  const meta = {
+    forest: { def: PRODUCTION.lumberyard, icon: '🌲', title: 'Forest', res: 'wood' },
+    berryfield: { def: PRODUCTION.forager, icon: '🫐', title: 'Berry field', res: 'food' },
+    rock: { def: PRODUCTION.quarry, icon: '⛰️', title: 'Rock outcrop', res: 'stone' },
+    mithrildeposit: { def: PRODUCTION.mine, icon: '💎', title: 'Mithril deposit', res: 'mithril' },
+  }[field.type]
+  const { def, icon, title, res } = meta
   const buildName = def.levels[0].name
 
   // is there already a matching workplace on this field?

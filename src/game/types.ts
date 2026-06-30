@@ -1,6 +1,10 @@
-export type ResourceType = 'wood' | 'food'
+export type ResourceType = 'wood' | 'food' | 'stone' | 'mithril' | 'weapons'
 
+/** a full stockpile — every resource has a value */
 export type Resources = Record<ResourceType, number>
+
+/** a price — only the resources it actually costs need to be listed */
+export type Cost = Partial<Resources>
 
 export interface Vec2 {
   x: number
@@ -13,6 +17,11 @@ export type VillagerState =
   | 'working' // at the workplace, producing a load
   | 'hauling' // carrying a produced load back to the townhall
   | 'waiting' // employed but their resource is full; loiters near the townhall
+  | 'scouting' // sent out to explore; reveals NPC villages it passes near
+  | 'hunting' // a lodge worker chasing down a wild animal
+  | 'marching' // a soldier in a war party heading to attack a village
+  | 'fighting' // a soldier locked in melee at a village
+  | 'converting' // a missionary at a village, winning it over
   | 'held' // picked up by the god's hand; position driven by the cursor
 
 export interface Villager {
@@ -34,12 +43,38 @@ export interface Villager {
   /** waypoints for the current trip (follows roads when one connects), or null */
   route: Vec2[] | null
   routeIndex: number
+  /** where a scout is currently headed (outbound target, then home), or null */
+  scoutTarget: Vec2 | null
+  /** true once a scout has reached its target and is heading back */
+  scoutReturning: boolean
+  /** the wild animal a hunter is currently chasing, or null */
+  huntAnimalId: number | null
+  /** the NPC village a soldier is marching on / a missionary is converting, or null */
+  targetVillageId: number | null
   /** purely cosmetic phase offset so villagers don't bob in sync */
   bob: number
 }
 
+// ---- wildlife ---------------------------------------------------------------
+/** a roaming wild animal hunters can chase for meat (food) */
+export interface Animal {
+  id: number
+  pos: Vec2
+  heading: number
+  /** spot it's ambling toward while grazing, or null */
+  wanderTarget: Vec2 | null
+  /** the loose home range it grazes within */
+  home: Vec2
+  /** pause timer between ambles */
+  restTimer: number
+  /** false once hunted; counts down `respawnTimer` then returns elsewhere */
+  alive: boolean
+  respawnTimer: number
+  bob: number
+}
+
 // ---- natural resource areas -------------------------------------------------
-export type FieldType = 'forest' | 'berryfield'
+export type FieldType = 'forest' | 'berryfield' | 'rock' | 'mithrildeposit'
 
 export interface ResourceField {
   id: number
@@ -49,9 +84,29 @@ export interface ResourceField {
 }
 
 // ---- player-built things ----------------------------------------------------
-export type BuildMode = 'none' | 'house' | 'path' | 'lumberyard' | 'forager'
+export type BuildMode =
+  | 'none'
+  | 'house'
+  | 'path'
+  | 'lumberyard'
+  | 'forager'
+  | 'quarry'
+  | 'hunter'
+  | 'mine'
+  | 'smithy'
+  | 'scout'
 
-export type BuildingKind = 'house' | 'lumberyard' | 'forager'
+export type BuildingKind =
+  | 'house'
+  | 'lumberyard'
+  | 'forager'
+  | 'quarry'
+  | 'hunter'
+  | 'mine'
+  | 'smithy'
+
+/** the production-building kinds (everything but residences) */
+export type ProductionKind = 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'smithy'
 
 /** which dwelling model a residence shows, by era */
 export type ResidenceModelKind = 'leanto' | 'tent' | 'hut' | 'house' | 'cottage'
@@ -72,9 +127,9 @@ export interface ResidenceEra {
   name: string
   model: ResidenceModelKind
   popBonus: number
-  buildCost: Resources
+  buildCost: Cost
   /** cost to upgrade an existing residence FROM the previous era to this one (null for era 0) */
-  upgradeCost: Resources | null
+  upgradeCost: Cost | null
 }
 
 /** one upgrade level of a production building (gated by town tier) */
@@ -90,18 +145,23 @@ export interface ProductionLevel {
   /** town tier required to reach this level */
   reqTier: number
   /** cost to upgrade INTO this level (null for the base level 0) */
-  upgradeCost: Resources | null
+  upgradeCost: Cost | null
 }
 
 /** static definition of a production building type */
 export interface ProductionDef {
-  kind: 'lumberyard' | 'forager'
+  kind: ProductionKind
   /** what it yields into your inventory */
   produces: ResourceType
-  /** which natural field it must be built on */
-  fieldType: FieldType
+  /** which natural field it must be built on, or null to place on open ground */
+  fieldType: FieldType | null
+  /** workers range out to chase wild animals instead of standing at the building */
+  hunt?: boolean
+  /** input resources drawn from your stockpile per load (crafting chains — dormant
+   * for now; reused later for smelting/forging weapons & alloys) */
+  consumes?: Cost
   /** cost to first place it (always at level 0) */
-  cost: Resources
+  cost: Cost
   half: number
   /** progression of levels; index lines up with Building.level */
   levels: ProductionLevel[]
@@ -131,14 +191,66 @@ export interface TownTier {
   popCap: number
   /** max amount of EACH resource you can stockpile at this tier */
   storageCap: number
+  /** max number of buildings you may have at this tier (advancing the age raises it) */
+  buildCap: number
   /** radius of your claimed territory at this tier (you can only build inside it) */
   territoryRadius: number
   /** cost paid to REACH this tier (undefined for the starting tier) */
-  upgradeCost?: Resources
+  upgradeCost?: Cost
   /** visual */
   color: string
   height: number
 }
 
+// ---- NPC villages (neutral settlements out in the world) --------------------
+/** a lightweight wandering inhabitant of an NPC village (idle life only) */
+export interface NpcVillager {
+  pos: Vec2
+  heading: number
+  wanderTarget: Vec2 | null
+  /** idle pause timer between ambles */
+  restTimer: number
+  /** cosmetic bob phase */
+  bob: number
+}
+
+/** an in-progress melee at a village (drives the visible fight + casualties) */
+export interface Battle {
+  villageId: number
+  /** seconds elapsed */
+  timer: number
+  /** does the attacker win? (decided up front from the two sides' strengths) */
+  win: boolean
+  /** soldiers fated to fall, each at a staggered moment during the fight */
+  doomed: { id: number; at: number; dead: boolean }[]
+}
+
+/** a neutral AI settlement: idles and slowly accrues its own resources */
+export interface NpcVillage {
+  id: number
+  name: string
+  /** has the player made contact (sent a scout that reached it)? */
+  discovered: boolean
+  /** neutral, or won over (conquered / converted) and now part of your realm */
+  owner: 'neutral' | 'player'
+  /** conversion progress 0..100 while a missionary preaches here */
+  influence: number
+  center: Vec2
+  /** era / size, index into TOWN_TIERS */
+  tierIndex: number
+  territoryRadius: number
+  /** their own stockpile, grows over time */
+  resources: Resources
+  /** resources gathered per second (their passive economy) */
+  income: Resources
+  /** decorative dwellings ringing the center */
+  huts: { pos: Vec2; rot: number; model: ResidenceModelKind }[]
+  villagers: NpcVillager[]
+}
+
 /** what the player currently has selected for the management panel */
-export type Selection = { kind: 'building'; id: number } | { kind: 'townhall' } | null
+export type Selection =
+  | { kind: 'building'; id: number }
+  | { kind: 'townhall' }
+  | { kind: 'npc'; id: number }
+  | null

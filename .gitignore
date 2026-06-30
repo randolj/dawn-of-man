@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# TypeScript incremental build cache + emitted config types
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# logs & editor noise
+*.log
+.DS_Store
+.vscode/
+.idea/

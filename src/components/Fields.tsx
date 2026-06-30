@@ -58,18 +58,65 @@ function BushClump({ c }: { c: Clump }) {
   )
 }
 
+function RockClump({ c }: { c: Clump }) {
+  const grey = `hsl(214, 7%, ${40 + c.tone * 16}%)`
+  return (
+    <group position={[c.x, 0, c.z]} scale={c.scale} rotation={[0, c.tone * Math.PI * 2, 0]}>
+      <mesh position={[0, 0.32, 0]} raycast={noHit} castShadow>
+        <dodecahedronGeometry args={[0.55, 0]} />
+        <meshStandardMaterial color={grey} flatShading />
+      </mesh>
+      <mesh position={[0.42, 0.16, 0.22]} rotation={[0.4, 0.8, 0]} raycast={noHit} castShadow>
+        <dodecahedronGeometry args={[0.28, 0]} />
+        <meshStandardMaterial color={grey} flatShading />
+      </mesh>
+    </group>
+  )
+}
+
+// a grey rock streaked with a coloured ore vein (mithril)
+function OreClump({ c, ore }: { c: Clump; ore: string }) {
+  const grey = `hsl(30, 8%, ${36 + c.tone * 14}%)`
+  return (
+    <group position={[c.x, 0, c.z]} scale={c.scale} rotation={[0, c.tone * Math.PI * 2, 0]}>
+      <mesh position={[0, 0.32, 0]} raycast={noHit} castShadow>
+        <dodecahedronGeometry args={[0.55, 0]} />
+        <meshStandardMaterial color={grey} flatShading />
+      </mesh>
+      <mesh position={[0.2, 0.5, 0.15]} rotation={[0.3, 0.6, 0]} raycast={noHit} castShadow>
+        <dodecahedronGeometry args={[0.26, 0]} />
+        <meshStandardMaterial color={ore} flatShading metalness={0.3} roughness={0.55} />
+      </mesh>
+    </group>
+  )
+}
+
+const TINTS: Record<ResourceField['type'], string> = {
+  forest: '#5d7e3c',
+  berryfield: '#7d8a4a',
+  rock: '#8a8278',
+  mithrildeposit: '#6f8a8f',
+}
+
 function Field({ field }: { field: ResourceField }) {
   const clumps = FIELD_CLUMPS[field.id] ?? []
-  const tint = field.type === 'forest' ? '#5d7e3c' : '#7d8a4a'
   return (
     <group>
       {/* subtle ground tint marking the field area */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[field.pos.x, 0.012, field.pos.z]} raycast={noHit}>
         <circleGeometry args={[field.radius + 1.2, 36]} />
-        <meshStandardMaterial color={tint} transparent opacity={0.55} />
+        <meshStandardMaterial color={TINTS[field.type]} transparent opacity={0.55} />
       </mesh>
       {clumps.map((c, i) =>
-        field.type === 'forest' ? <PineClump key={i} c={c} /> : <BushClump key={i} c={c} />,
+        field.type === 'forest' ? (
+          <PineClump key={i} c={c} />
+        ) : field.type === 'berryfield' ? (
+          <BushClump key={i} c={c} />
+        ) : field.type === 'mithrildeposit' ? (
+          <OreClump key={i} c={c} ore="#9fd4de" />
+        ) : (
+          <RockClump key={i} c={c} />
+        ),
       )}
     </group>
   )

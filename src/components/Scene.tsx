@@ -6,6 +6,9 @@ import { Scenery } from './Scenery'
 import { Fields } from './Fields'
 import { Territory } from './Territory'
 import { TownCenter } from './TownCenter'
+import { NpcVillages } from './NpcVillages'
+import { FogOfWar } from './FogOfWar'
+import { Animals } from './Animals'
 import { Villager } from './Villager'
 import { Buildings } from './Buildings'
 import { Paths } from './Paths'
@@ -25,7 +28,7 @@ export function Scene() {
       <CameraRig />
       {!introDone && <IntroCamera onDone={() => setIntroDone(true)} />}
 
-      <fog attach="fog" args={['#cfe3f0', 55, 130]} />
+      <fog attach="fog" args={['#cfe3f0', 130, 320]} />
       <Sky sunPosition={[40, 18, 25]} turbidity={6} rayleigh={1.2} />
 
       <hemisphereLight args={['#dff0ff', '#5a6b3a', 0.7]} />
@@ -49,8 +52,11 @@ export function Scene() {
       <Fields />
       <Paths />
       <TownCenter />
+      <NpcVillages />
+      <Animals />
       <Buildings />
       <BuildController />
+      <FogOfWar />
 
       {villagers.map((v) => (
         <Villager key={v.id} villagerId={v.id} />
@@ -60,7 +66,7 @@ export function Scene() {
         <MapControls
           target={[0, 0.5, 0]}
           minDistance={5}
-          maxDistance={95}
+          maxDistance={150}
           maxPolarAngle={Math.PI / 2.1}
           makeDefault
         />

@@ -38,7 +38,7 @@ function rng(seed: number) {
   }
 }
 
-export const WORLD_RADIUS = 90
+export const WORLD_RADIUS = 140
 const INNER_KEEPOUT = 12 // leave the starting play area clear of decoration
 
 function build() {
@@ -48,25 +48,25 @@ function build() {
   const rocks: Rock[] = []
 
   // --- mountains ring the far edge of the world ---
-  const mountainCount = 14
+  const mountainCount = 22
   for (let i = 0; i < mountainCount; i++) {
-    const a = (i / mountainCount) * Math.PI * 2 + (r() - 0.5) * 0.3
-    const dist = 66 + r() * 16
-    const height = 9 + r() * 12
+    const a = (i / mountainCount) * Math.PI * 2 + (r() - 0.5) * 0.25
+    const dist = 110 + r() * 22
+    const height = 11 + r() * 15
     mountains.push({
       x: Math.cos(a) * dist,
       z: Math.sin(a) * dist,
-      radius: 7 + r() * 7,
+      radius: 9 + r() * 9,
       height,
-      snow: height > 14,
+      snow: height > 16,
     })
   }
 
   // --- decorative trees scattered across the mid/outer field ---
-  const treeCount = 70
+  const treeCount = 150
   let placed = 0
   let guard = 0
-  while (placed < treeCount && guard < 2000) {
+  while (placed < treeCount && guard < 4000) {
     guard++
     const a = r() * Math.PI * 2
     const dist = INNER_KEEPOUT + r() * (WORLD_RADIUS - INNER_KEEPOUT - 12)
@@ -83,7 +83,7 @@ function build() {
   }
 
   // --- rocks ---
-  const rockCount = 28
+  const rockCount = 50
   for (let i = 0; i < rockCount; i++) {
     const a = r() * Math.PI * 2
     const dist = INNER_KEEPOUT + r() * (WORLD_RADIUS - INNER_KEEPOUT - 8)

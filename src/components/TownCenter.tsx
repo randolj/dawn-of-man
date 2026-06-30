@@ -16,8 +16,9 @@ export function TownCenter() {
   const next = TOWN_TIERS[tierIndex + 1]
   const canUpgrade =
     !!next?.upgradeCost &&
-    resources.wood >= next.upgradeCost.wood &&
-    resources.food >= next.upgradeCost.food
+    resources.wood >= (next.upgradeCost.wood ?? 0) &&
+    resources.food >= (next.upgradeCost.food ?? 0) &&
+    resources.stone >= (next.upgradeCost.stone ?? 0)
   const selected = selection?.kind === 'townhall'
   const beaconY = tierIndex === 0 ? 1.9 : tierIndex === 1 ? 4.2 : tier.height + 1.9
 

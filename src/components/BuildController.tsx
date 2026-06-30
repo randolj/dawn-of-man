@@ -61,7 +61,14 @@ export function BuildController() {
     if (g.buildMode === 'house') g.placeResidence(p)
     else if (g.buildMode === 'lumberyard') g.placeProduction(p, 'lumberyard')
     else if (g.buildMode === 'forager') g.placeProduction(p, 'forager')
-    else if (g.buildMode === 'path') g.addPathPoint(p)
+    else if (g.buildMode === 'quarry') g.placeProduction(p, 'quarry')
+    else if (g.buildMode === 'hunter') g.placeProduction(p, 'hunter')
+    else if (g.buildMode === 'mine') g.placeProduction(p, 'mine')
+    else if (g.buildMode === 'smithy') g.placeProduction(p, 'smithy')
+    else if (g.buildMode === 'scout') {
+      g.sendScoutTo(p)
+      g.setBuildMode('none')
+    } else if (g.buildMode === 'path') g.addPathPoint(p)
     else {
       // click a forest / berry field to send a villager on ONE manual gather
       // trip (each trip is hand-triggered); otherwise click empty ground to deselect
@@ -85,10 +92,35 @@ export function BuildController() {
       </mesh>
 
       {buildMode === 'house' && <ResidenceGhost />}
-      {(buildMode === 'lumberyard' || buildMode === 'forager') && (
-        <ProductionGhost kind={buildMode} />
-      )}
+      {(buildMode === 'lumberyard' ||
+        buildMode === 'forager' ||
+        buildMode === 'quarry' ||
+        buildMode === 'hunter' ||
+        buildMode === 'mine' ||
+        buildMode === 'smithy') && <ProductionGhost kind={buildMode} />}
       {buildMode === 'path' && <PathGhost />}
+      {buildMode === 'scout' && <ScoutGhost />}
+    </group>
+  )
+}
+
+// a target reticle that follows the cursor while choosing where to scout
+function ScoutGhost() {
+  const root = useRef<Group>(null)
+  useFrame(() => {
+    const c = useGame.getState().cursorGround
+    if (root.current) root.current.position.set(c.x, 0.06, c.z)
+  })
+  return (
+    <group ref={root}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[1.3, 1.7, 32]} />
+        <meshBasicMaterial color="#9fd8ff" transparent opacity={0.85} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.18, 0.34, 20]} />
+        <meshBasicMaterial color="#9fd8ff" transparent opacity={0.9} />
+      </mesh>
     </group>
   )
 }
@@ -114,7 +146,7 @@ function ResidenceGhost() {
     const c = g.cursorGround
     root.current.position.set(c.x, 0, c.z)
     root.current.rotation.y = Math.atan2(-c.x, -c.z)
-    const ok = g.canAfford(era.buildCost) && g.canPlaceAt(c, RESIDENCE_HALF)
+    const ok = !g.atBuildCap() && g.canAfford(era.buildCost) && g.canPlaceAt(c, RESIDENCE_HALF)
     material.color.set(ok ? '#6fe06f' : '#e06f6f')
   })
 
@@ -125,7 +157,11 @@ function ResidenceGhost() {
   )
 }
 
-function ProductionGhost({ kind }: { kind: 'lumberyard' | 'forager' }) {
+function ProductionGhost({
+  kind,
+}: {
+  kind: 'lumberyard' | 'forager' | 'quarry' | 'hunter' | 'mine' | 'smithy'
+}) {
   const root = useRef<Group>(null)
   const material = useGhostMaterial()
   const def = PRODUCTION[kind]
@@ -136,7 +172,7 @@ function ProductionGhost({ kind }: { kind: 'lumberyard' | 'forager' }) {
     const c = g.cursorGround
     root.current.position.set(c.x, 0, c.z)
     root.current.rotation.y = Math.atan2(-c.x, -c.z)
-    const ok = g.canAfford(def.cost) && g.canPlaceProduction(c, kind)
+    const ok = !g.atBuildCap() && g.canAfford(def.cost) && g.canPlaceProduction(c, kind)
     material.color.set(ok ? '#6fe06f' : '#e06f6f')
   })
 

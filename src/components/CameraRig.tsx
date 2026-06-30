@@ -5,7 +5,7 @@ import { useGame } from '../game/store'
 
 type Controls = { target: Vector3; update: () => void; enabled: boolean } | null
 
-const PAN_SPEED = 22 // world units / second at full tilt
+const PAN_SPEED = 32 // world units / second at full tilt
 
 /**
  * WASD / arrow-key panning on top of MapControls, so the "god" can roam the map
